@@ -64,6 +64,9 @@ services:
     profiles: ["audit"]
     image: ghcr.io/usareur-af/goat-audit-subscriber@sha256:6aacd50c4f6a8937e1750374a4e0b9a1150ddffe66a81d37fdb77c9e1ff49ae5
     container_name: goat-moon-audit-sink
+    # The image's own user, stated here because first-boot.sh lays the TLS files group-readable
+    # by exactly this gid (root:65532, 0640). Change both together.
+    user: "65532:65532"
     network_mode: host
     restart: unless-stopped
     depends_on:
