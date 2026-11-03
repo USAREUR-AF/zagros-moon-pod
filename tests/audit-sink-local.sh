@@ -102,7 +102,7 @@ printf 'POD_STATE_DIR=%s\nPOD_ID=ci-pod\n' "$STATE" >> "${POD_DIR}/profiles/${PR
 
 log "host/first-boot.sh ${PROFILE_NAME}"
 sudo env PATH="${STUBS}:${PATH}" bash "${POD_DIR}/host/first-boot.sh" "${PROFILE_NAME}" "${WORK}/pod.cbor"
-grep '^ZENOH_LOCAL_ENDPOINT=' "${POD_DIR}/compose/.env" | sed 's/^/    /'
+sudo grep "^ZENOH_LOCAL_ENDPOINT=" "${POD_DIR}/compose/.env" | sed 's/^/    /'
 # --profile audit is a no-op once the sink starts by default, and starts it while it is gated.
 ( cd "${POD_DIR}/compose" && sudo docker compose --profile audit up -d )
 
@@ -127,7 +127,7 @@ log "audit sink: running=${running} restarts=${restarts}"
 log "publishing ${PUBLISH_COUNT} samples to ${SLOT}/test/ping over mTLS"
 python3 -m venv "${WORK}/venv"
 "${WORK}/venv/bin/pip" install -q eclipse-zenoh==1.9.0
-ENDPOINT="$(sed -n 's/^ZENOH_LOCAL_ENDPOINT=//p' "${POD_DIR}/compose/.env")"
+ENDPOINT="$(sudo sed -n 's/^ZENOH_LOCAL_ENDPOINT=//p' "${POD_DIR}/compose/.env")"
 before="$(metric goat_audit_samples_total)"
 sudo "${WORK}/venv/bin/python" -I - "$ENDPOINT" "$STATE/zenoh/tls" "${SLOT}/test/ping" "$PUBLISH_COUNT" <<'PY'
 import json, sys, time
