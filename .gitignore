@@ -1,0 +1,17 @@
+# pod runtime state (never committed)
+compose/.env
+*.cbor
+*.pem
+*.key
+
+# filled per-partner profile copies (slot ids never land in a commit)
+profiles/*-local/
+
+# local build / test
+/target
+*.log
+
+# python (the examples are runnable)
+__pycache__/
+*.pyc
+.venv/

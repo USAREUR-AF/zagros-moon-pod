@@ -1,0 +1,268 @@
+# The pod's Zenoh router config
+
+What the pod's Zenoh router configuration looks like, why it is as small as it is, and how it
+gets created, managed, and used. If you just want to run a pod you were handed, you never touch
+this file — it is generated for you. This doc is for understanding what got generated and why.
+
+## TL;DR
+
+- The pod router config is **JSON5** (JSON with comments + trailing commas), ~90 lines.
+- **You do not hand-write it.** A committed *template* (`host/zenoh-router.json5.tmpl`) is
+  rendered into the final `config.json5` by `host/first-boot.sh`, filling placeholders from the
+  **signed join bundle** (source of truth) plus the active **profile** (`profiles/<env>/`).
+- It is deliberately **simple**: the pod is your *single-tenant* box. It only needs to dial the
+  fabric, listen for your local clients, and default-deny everything outside your namespace. The
+  heavy multi-tenant access control lives on the **goat side** (the ingress gateway, ADR 1020),
+  not here.
+- To change it, you change a **profile var or the bundle** and re-run first-boot — never edit the
+  rendered file by hand (it is overwritten on every re-render).
+
+## The fabric endpoint
+
+If all you want is the address the pod dials to reach the zagros fabric: it comes from
+your **bundle** (`router_endpoint`, echoed in the bundle's NOTES.md), and has the shape:
+
+```
+tls/<goatnet-router>:7447
+```
+
+Read it as three parts: `tls/` is the Zenoh transport (mTLS-encrypted TCP), the host is the
+goat-side router reachable over the mesh, and `7447` is Zenoh's standard router port. Your pod
+**dials out** to this; it is never dialled into.
+
+You normally never type this value. Your **signed join bundle** carries it as
+`goat_cli_extras.router_endpoint`, and `host/first-boot.sh` reads it from there — the bundle is the
+source of truth. The same literal also lives in [`profiles/zagros/profile.env`](../profiles/zagros/profile.env)
+as `ZENOH_FABRIC_ENDPOINT`, but only as a **fallback** for hand-driven validation when a bundle is
+absent; the bundle's value wins whenever present. Pointed at a different stack (production), the
+endpoint is whatever that stack's bundle carries — switching is a different bundle, never an edit
+here.
+
+A few connection facts that go with the endpoint:
+
+| Fact | Value | Why |
+|---|---|---|
+| Transport | mTLS over TCP (`tls/`) | every peer presents a cert rooted in the bundle's CA |
+| Port | `7447` | Zenoh's standard router port (also the pod's local listen port) |
+| Cert name check | `verify_name_on_connect: false` | the goat router cert's SAN binds a mesh IP, not this DNS name |
+| Reachability | over the netbird mesh | the host resolves and routes only once your mesh client is up |
+
+If the pod cannot reach it, the mesh is the first thing to check (`goat doctor`), not the config —
+the endpoint above is correct by construction once your bundle is loaded.
+
+## A complete worked example
+
+Below is a representative *rendered* `config.json5` for a zagros sandbox pod — i.e. the template
+after `first-boot.sh` has substituted the placeholders. The example slot anchor
+`0123abcd4567ef890123abcd4567ef89` stands in for the per-uuid slot minted at enrollment;
+your real one comes from your bundle.
+
+```json5
+{
+  mode: "router",
+
+  // (1) Local listen — pod-side clients (goat-cli pub/sub, the audit-sink) connect here over mTLS.
+  listen: {
+    endpoints: ["tls/0.0.0.0:7447"],
+  },
+
+  // (2) Dial OUT to the goat-side receiver over the mesh. The pod is a Tier-2 peer; the goat side
+  //     decides the admitted shape. Endpoint comes from the bundle (router_endpoint).
+  connect: {
+    endpoints: ["tls/<goatnet-router-from-bundle>:7447"],
+  },
+
+  // (3) mTLS identity for BOTH directions — same leaf cert as listener and as connector.
+  transport: {
+    link: {
+      tls: {
+        listen_certificate:  "/etc/zenoh/tls/pod-cert.pem",
+        listen_private_key:  "/etc/zenoh/tls/pod-key.pem",
+        connect_certificate: "/etc/zenoh/tls/pod-cert.pem",
+        connect_private_key: "/etc/zenoh/tls/pod-key.pem",
+        root_ca_certificate: "/etc/zenoh/tls/ca-roots.pem",
+        enable_mtls: true,
+        verify_name_on_connect: false,
+      },
+    },
+  },
+
+  // (4) Load the upstream plugins shipped in the stock image (REST, storage_manager).
+  plugins_loading: {
+    enabled: true,
+    search_dirs: ["/", "/opt/zenoh/plugins"],
+  },
+
+  // (5) Pod-side ACL — default-deny, mTLS-gated. This is YOUR boundary on YOUR box; the
+  //     load-bearing fabric enforcement is goat-side. We default-deny here as good hygiene.
+  access_control: {
+    enabled: true,
+    default_permission: "deny",
+    rules: [
+      {
+        // Your own first-party data: publish + subscribe within your slot, both flows.
+        id: "pod-firstparty",
+        messages: ["put", "delete", "declare_subscriber", "query", "declare_queryable", "reply"],
+        flows: ["egress", "ingress"],
+        permission: "allow",
+        key_exprs: ["0123abcd4567ef890123abcd4567ef89/**"],
+      },
+      {
+        // Inbound bilateral data the fabric publishes TO you. Rendered from ${INBOUND_NAMESPACE};
+        // on the zagros sandbox that falls back to your own slot (as here) until a bilateral grant
+        // exists — release/goat/** is the production convention.
+        id: "pod-inbound",
+        messages: ["declare_subscriber", "query", "put", "reply"],
+        flows: ["egress", "ingress"],
+        permission: "allow",
+        key_exprs: ["0123abcd4567ef890123abcd4567ef89/**"],
+      },
+    ],
+    subjects: [
+      {
+        // Any mTLS peer rooted in the bundle's CA (your local clients + the goat side).
+        id: "mtls-peer",
+        link_protocols: ["tls"],
+      },
+    ],
+    policies: [
+      { rules: ["pod-firstparty", "pod-inbound"], subjects: ["mtls-peer"] },
+    ],
+  },
+}
+```
+
+That is the whole file. There is no rocksdb storage block, no per-tenant rule fan-out, no
+adminspace — see [Complexity](#why-it-is-this-small-complexity) for why.
+
+## Section-by-section
+
+| # | Block | What it does |
+|---|---|---|
+| 1 | `listen` | The local mTLS endpoint your own clients connect to (`goat-cli`, the audit-sink). Binds `0.0.0.0` *inside the container*; `network_mode: host` in compose puts it on the pod's mesh IP. |
+| 2 | `connect` | The goat-side endpoint the pod **dials out** to over the mesh. The pod initiates; it is not dialled into. |
+| 3 | `transport.link.tls` | The pod's single mTLS leaf identity, used as both listener and connector. `enable_mtls: true` means every peer must present a cert rooted in `root_ca_certificate`. `verify_name_on_connect: false` because the goat router cert's SAN binds a mesh IP, not the DNS name dialled. |
+| 4 | `plugins_loading` | Tells zenohd where to find the plugins bundled in the stock `eclipse/zenoh` image. `"/"` is where upstream ships REST + storage_manager; `/opt/zenoh/plugins` is where an optional rocksdb backend `.so` would go (not used in v0). |
+| 5 | `access_control` | Default-deny floor. A **rule** says *what* (messages + key_exprs + flow direction); a **subject** says *who* (here, any mTLS-rooted peer); a **policy** binds rules to subjects. |
+
+### How the ACL three-part shape reads
+
+Zenoh's ACL is three lists that compose:
+
+- **rules** — named permission grants. `pod-firstparty` allows pub/sub on `<your-slot>/**`;
+  `pod-inbound` allows receiving the `${INBOUND_NAMESPACE}` prefix (your own slot on the
+  sandbox; `release/goat/**` once bilateral in production).
+- **subjects** — named identity matchers. `mtls-peer` matches any peer that completed an mTLS
+  handshake (`link_protocols: ["tls"]`). Other axes exist (`cert_common_names`, `zids`,
+  `interfaces`, `usernames`); the pod uses the link-protocol axis because it is single-tenant —
+  every authorized peer is *you*.
+- **policies** — bindings: "these subjects get these rules." Anything not granted falls through to
+  `default_permission: "deny"`.
+
+The direction split matters: `flows: ["ingress"]` is *into* the router (a publish/write),
+`flows: ["egress"]` is *out of* the router (delivery to a subscriber). The pod grants both within
+your namespace so you can publish and read your own data locally.
+
+## Why it is this small (complexity)
+
+The pod router is ~90 lines and intentionally so. Three reasons:
+
+1. **Single-tenant.** It is *your* box. There is exactly one identity to authorize (you), so the
+   ACL is one subject and two rules — not a per-tenant fan-out.
+2. **Enforcement is goat-side.** A moon-pod is a **Tier-2 peer** (ADR 1020): it does not federate
+   directly into a goat core router. It dials a goat-operated **ingress gateway** that
+   authenticates the pod's cert, admits its data origin-scoped, and records provenance. So the
+   pod's own ACL is hygiene, not the load-bearing control — the fabric does not trust the pod to
+   police itself.
+3. **No storage in v0.** The pod does not persist fabric data to rocksdb; basic pub/sub needs no
+   storage backend. (Durable local audit is the audit-sink's job, and durable replay is a
+   documented v0.x follow-up.) That removes the entire `plugins.storage_manager` block — volumes,
+   per-prefix storages, retention/TTL, garbage-collection — that a persisting router carries.
+
+For contrast: a goat-side **core** router config is much larger because it carries all of the
+above — many tenants, many per-namespace rules, rocksdb storages with retention, an adminspace
+for live onboarding, a pinned router ZID, and HLC timestamping. The pod deliberately carries none
+of that weight. You are running the edge, not the core.
+
+## Lifecycle: create, manage, use
+
+### Create — how the file comes to exist
+
+```
+host/zenoh-router.json5.tmpl   ──envsubst──▶   ${POD_STATE_DIR}/zenoh/config.json5
+   (committed template,            (in            (rendered, gitignored, on the
+    placeholders)              first-boot.sh)       LUKS volume)
+```
+
+`first-boot.sh` step [3/6] runs `envsubst` over the template, substituting these placeholders:
+
+| Placeholder | Comes from | Notes |
+|---|---|---|
+| `${ZENOH_LISTEN_PORT}` | profile (default `7447`) | local listen port |
+| `${ZENOH_FABRIC_ENDPOINT}` | **bundle** `router_endpoint` (profile is fallback only) | the goat-side endpoint dialled |
+| `${PARTNER_NAMESPACE}` | profile (your slot anchor) | your write/read prefix |
+| `${INBOUND_NAMESPACE}` | profile (defaults to your namespace when unset) | bilateral inbound prefix |
+| `${POD_CERT_PEM}` / `${POD_KEY_PEM}` / `${CA_ROOTS_PEM}` | **bundle** (extracted by `goat profile init`) | in-container cert paths |
+
+The cert/key/CA values are extracted from the signed bundle by `goat profile init` and laid down
+under the pod's LUKS-encrypted state dir — they are never compiled in and never committed. The
+**bundle is the source of truth**; the profile only supplies what the bundle does not carry. This
+is why the same scaffold runs against zagros today and production later with no code change — a
+different bundle + profile is the only difference.
+
+### Manage — how to change it
+
+**Never edit the rendered `config.json5` by hand** — first-boot overwrites it on every re-render.
+Change the input instead:
+
+| You want to change | Change this | Then |
+|---|---|---|
+| Your write namespace / slot | `PARTNER_NAMESPACE` in `profiles/<env>/profile.env` | re-run first-boot |
+| The fabric endpoint you dial | the **bundle** (preferred), or `ZENOH_FABRIC_ENDPOINT` fallback | re-run first-boot |
+| Add a bilateral inbound channel | uncomment/set `INBOUND_NAMESPACE` in the profile | re-run first-boot |
+| Local listen port | `ZENOH_LISTEN_PORT` in the profile | re-run first-boot |
+| The ACL shape itself (rare) | `host/zenoh-router.json5.tmpl` (the template) | open a PR — this is a scaffold change |
+
+Re-running `first-boot.sh <profile> <bundle>` is idempotent: it re-renders the config and
+re-applies the compose stack. A profile change is a re-render; a template change is a code change
+that goes through a PR (per `CONTRIBUTING.md`), because it affects every pod.
+
+### Use — how the running pod consumes it
+
+`compose/docker-compose.yml` mounts the rendered file **read-only** into the router container and
+points zenohd at it:
+
+```yaml
+volumes:
+  - ${POD_STATE_DIR}/zenoh/config.json5:/etc/zenoh/config.json5:ro
+command: ["-c", "/etc/zenoh/config.json5"]
+```
+
+zenohd reads it once at startup. To apply a change, re-render then `sudo docker compose up -d`
+(sudo because `compose/.env` is root-owned; or re-run first-boot, which does both).
+
+## Validate + troubleshoot
+
+- **Is the JSON5 well-formed?** `sudo docker compose logs zenoh-router` — a parse error fails the
+  container at startup with a line/column. JSON5 allows comments and trailing commas, so a stray
+  comma is not an error, but a missing brace is.
+- **Did the substitution work?** Open the rendered `${POD_STATE_DIR}/zenoh/config.json5` and
+  confirm no `${...}` placeholders remain and the slot anchor is your real one (not
+  `CHANGE-ME-...`). An unset profile var leaves the literal placeholder behind.
+- **A publish "succeeds" but nothing arrives.** Zenoh ACL denial is **silent** — there is no
+  error to the publisher. Check that your key starts with `${PARTNER_NAMESPACE}/` exactly; a
+  publish outside your namespace is dropped by the goat-side ACL with no signal. Confirm reach +
+  identity with `goat doctor`, and confirm a topic round-trips with `goat pub <ns>/test/ping`
+  while a `goat sub '<ns>/**' --follow` watches.
+- **mTLS handshake fails on connect.** The cert under `/etc/zenoh/tls/` must be rooted in the
+  same CA as the goat side (it is, when it came from your bundle). A stale cert from a previous
+  bundle is the usual cause — re-run first-boot to rotate.
+
+## See also
+
+- [`architecture.md`](architecture.md) — where the router sits in the bundle and the data flow.
+- [`partner-contract.md`](partner-contract.md) — the Tier-2 ingress model the ACL is sized
+  against.
+- [`zagros-vs-production.md`](zagros-vs-production.md) — what varies per stack and where it lives.
+- [`partner-run-guide.md`](partner-run-guide.md) — running a pod end-to-end.
+- `host/zenoh-router.json5.tmpl` — the committed template this doc explains.
