@@ -156,8 +156,8 @@ docker_ready_probe()      { docker info >/dev/null 2>&1; }
 containers_up_probe() {
     # "Up 2 minutes (unhealthy)" still contains "Up" - a container failing its
     # healthcheck must not count as up, or the whole ladder reports a sick pod green.
-    # Router only: goat-moon-audit-sink is opt-in behind the compose 'audit' profile
-    # and never starts on a plain up, so requiring it fails every default pod.
+    # Gates on the router only: the audit sink waits for a healthy router before it starts,
+    # and Part 3 reports it separately.
     local ps; ps=$(docker ps --format '{{.Names}}\t{{.Status}}' 2>/dev/null)
     echo "$ps" | grep "^goat-moon-zenoh-router" | grep "Up" | grep -qv "(unhealthy)"
 }
@@ -906,7 +906,9 @@ run_part2() {
     fi
     docker ps --format '{{.Names}}' | grep -q "goat-moon-zenoh-router" \
         && ok "goat-moon-zenoh-router container is up" || fail "goat-moon-zenoh-router container not found"
-    info "goat-moon-audit-sink is opt-in behind the compose 'audit' profile - not expected on a plain up"
+    docker ps --format '{{.Names}}' | grep -q "goat-moon-audit-sink" \
+        && ok "goat-moon-audit-sink container is up" \
+        || warn "goat-moon-audit-sink container not found - see docs/partner-run-guide.md, 'Trouble'"
 
     PART2_FAILED=$FAILED
     if [ "$PART2_FAILED" -eq 0 ]; then
@@ -970,10 +972,13 @@ A stale bundle points the router config at the wrong endpoint - get a fresh one 
     DOCKER_PS=$(docker ps --format '{{.Names}}\t{{.Status}}')
     echo "$DOCKER_PS" | sed 's/^/  /'
     ROUTER_UP=$(echo "$DOCKER_PS" | grep "^goat-moon-zenoh-router" | grep -i "Up" | grep -cv "(unhealthy)")
-    # goat-moon-audit-sink is opt-in behind the compose 'audit' profile; only the
-    # router is required. Report the sink when present, never require it.
-    echo "$DOCKER_PS" | grep -q "^goat-moon-audit-sink" \
-        && info "goat-moon-audit-sink present (opt-in 'audit' profile is active)"
+    # The router is required; the audit sink is reported, and a missing or restarting sink
+    # is a warning (the data plane does not depend on it).
+    if echo "$DOCKER_PS" | grep "^goat-moon-audit-sink" | grep -q "Up"; then
+        ok "goat-moon-audit-sink Up"
+    else
+        warn "goat-moon-audit-sink is not Up - see docs/partner-run-guide.md, 'Trouble'"
+    fi
     if [ "$ROUTER_UP" -ge 1 ]; then
         ok "goat-moon-zenoh-router Up"
         record "3. Containers (docker ps)" "PASS"

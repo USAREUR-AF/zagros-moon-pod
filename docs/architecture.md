@@ -69,7 +69,9 @@ Both compose services use **already-published images** — no local Dockerfile/b
 - `zenoh-router`: upstream `eclipse/zenoh:1.9.0` (digest-pinned, ADR 0858).
 - `audit-sink`: the published `ghcr.io/usareur-af/goat-audit-subscriber` image (the standalone Rust
   Zenoh client), run in **observe-only** mode in v0 (subscribe + Prometheus metrics, no S3
-  endpoint → no durable write). Durable local audit (NDJSON on the LUKS volume, or a co-located
+  endpoint → no durable write). It starts with the router, dials it on loopback with the pod's
+  leaf, and runs as uid/gid 65532, which first-boot grants read access to the TLS files. Its
+  metrics are on `:9303`. Durable local audit (NDJSON on the LUKS volume, or a co-located
   MinIO) is a documented v0.x follow-up.
 
 The earlier `../audit` and `../doctor` build-context stubs were an oversight (no Dockerfiles →

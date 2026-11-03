@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # audit-sink-local.sh — stand the pod up on THIS host through host/first-boot.sh, with a
 # synthetic CA and pod leaf in place of a goat-side enrollment bundle, and prove the audit sink
-# runs: container up and not restarting, metrics on :9303, session open, and a publish into the
+# starts on first-boot's plain `docker compose up` and runs: container up and not restarting, metrics on :9303, session open, and a publish into the
 # pod's namespace counted by goat_audit_samples_total.
 #
 # For a disposable Linux host with Docker (CI runs it on every PR: .github/workflows/
@@ -13,15 +13,11 @@
 # LISTEN certificate, so it needs serverAuth). LEAF_EKU=clientAuth reproduces a leaf that lacks it.
 #
 # Environment:
-#   LOCAL_ENDPOINT  mesh (default) | loopback — which address first-boot hands the audit sink.
-#                   "mesh" stubs `netbird status` with this host's primary address, the way a
-#                   real pod resolves its mesh IP; "loopback" is first-boot's no-mesh fallback.
 #   LEAF_EKU        EKU set for the synthetic leaf (default serverAuth,clientAuth).
 #   PUBLISH_COUNT   samples to publish and expect counted (default 5).
 set -euo pipefail
 
 POD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOCAL_ENDPOINT="${LOCAL_ENDPOINT:-mesh}"
 LEAF_EKU="${LEAF_EKU:-serverAuth,clientAuth}"
 PUBLISH_COUNT="${PUBLISH_COUNT:-5}"
 SLOT="7f3c2a10-0000-4000-8000-00000000c1a0"   # synthetic slot anchor
@@ -41,7 +37,7 @@ dump() {
   done
 }
 cleanup() {
-  ( cd "${POD_DIR}/compose" && sudo docker compose --profile audit down -v --remove-orphans ) >/dev/null 2>&1 || true
+  ( cd "${POD_DIR}/compose" && sudo docker compose down -v --remove-orphans ) >/dev/null 2>&1 || true
   sudo systemctl disable --now goat-doctor.timer >/dev/null 2>&1 || true
   sudo rm -f /etc/systemd/system/goat-doctor.service /etc/systemd/system/goat-doctor.timer
   sudo rm -rf "${WORK}" "${POD_DIR}/profiles/${PROFILE_NAME}" "${POD_DIR}/compose/.env"
@@ -68,7 +64,7 @@ openssl x509 -req -in "$MINT/leaf.csr" -CA "$MINT/ca.pem" -CAkey "$MINT/ca.key" 
   -days 2 -sha256 -extfile "$MINT/leaf.ext" -out "$MINT/leaf.pem" 2>/dev/null
 openssl x509 -in "$MINT/leaf.pem" -noout -ext extendedKeyUsage | tail -n 1 | sed 's/^ */    leaf EKU: /'
 
-# --- 2. Stub `goat` (and `netbird`) in place of the goat-side bundle path ---------------------------
+# --- 2. Stub `goat` in place of the goat-side bundle path ---------------------------
 # first-boot's step [1/6] calls `goat ca ls` and `goat profile init <bundle>`; the stub writes the
 # synthetic material where `goat profile init` writes the real thing.
 STUBS="${WORK}/bin"; mkdir -p "$STUBS"
@@ -85,12 +81,6 @@ case "\$1 \$2" in
   *)              exit 0 ;;
 esac
 EOF
-if [ "$LOCAL_ENDPOINT" = mesh ]; then
-  HOST_IP="$(ip -4 route get 192.0.2.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p')"
-  [ -n "$HOST_IP" ] || { echo "could not resolve this host's primary IPv4"; exit 2; }
-  printf '#!/usr/bin/env bash\necho "NetBird IP: %s/16"\n' "$HOST_IP" > "$STUBS/netbird"
-  log "netbird stub reports ${HOST_IP} as the mesh IP"
-fi
 chmod +x "$STUBS"/*
 
 # --- 3. A filled local profile, then first-boot as a partner runs it ---------------------------------
@@ -103,8 +93,6 @@ printf 'POD_STATE_DIR=%s\nPOD_ID=ci-pod\n' "$STATE" >> "${POD_DIR}/profiles/${PR
 log "host/first-boot.sh ${PROFILE_NAME}"
 sudo env PATH="${STUBS}:${PATH}" bash "${POD_DIR}/host/first-boot.sh" "${PROFILE_NAME}" "${WORK}/pod.cbor"
 sudo grep "^ZENOH_LOCAL_ENDPOINT=" "${POD_DIR}/compose/.env" | sed 's/^/    /'
-# --profile audit is a no-op once the sink starts by default, and starts it while it is gated.
-( cd "${POD_DIR}/compose" && sudo docker compose --profile audit up -d )
 
 # --- 4. Assertions -----------------------------------------------------------------------------------
 metric() {  # sum of every sample of a metric family

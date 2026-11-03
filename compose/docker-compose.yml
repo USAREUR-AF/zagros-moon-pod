@@ -48,20 +48,8 @@ services:
     # ../docs/architecture.md "Audit". For a functionality test, observe-only proves the
     # audit data path (subscribe + count) without standing up object storage.
     #
-    # KNOWN ISSUE (2026-08-20, network_mode: host): the sink currently crash-loops against the
-    # LOCAL router. Two upstream defects, confirmed by a from-scratch rehearsal: (a) the image's
-    # zenoh session runs peer-shaped and tries to bind its own TLS listener on the endpoint,
-    # which the router already owns via 0.0.0.0:7447; (b) the pod's minted leaf is
-    # clientAuth-only, and presenting it as the router's LISTEN cert draws a fatal
-    # UnsupportedCertificate from EKU-checking clients. Fixes live in the subscriber image and
-    # the mint (tracked upstream) — not in this compose file. The data plane (router + pub/sub)
-    # is unaffected; see docs/partner-run-guide.md "Trouble".
-    #
-    # Until those land, the service sits behind the "audit" profile so a plain `up` does not
-    # start a container we know cannot run (it would crash-loop under restart: unless-stopped,
-    # burning cycles and teaching operators to ignore a restarting container). Opt in with
-    # `docker compose --profile audit up` once the upstream fixes ship.
-    profiles: ["audit"]
+    # Starts with the router on a plain `up`. Proven on every PR by tests/audit-sink-local.sh
+    # (.github/workflows/audit-sink.yml): first-boot, then a publish into the namespace counted.
     image: ghcr.io/usareur-af/goat-audit-subscriber@sha256:6aacd50c4f6a8937e1750374a4e0b9a1150ddffe66a81d37fdb77c9e1ff49ae5
     container_name: goat-moon-audit-sink
     # The image's own user, stated here because first-boot.sh lays the TLS files group-readable

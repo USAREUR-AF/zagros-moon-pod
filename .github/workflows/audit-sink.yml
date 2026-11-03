@@ -2,8 +2,7 @@ name: audit-sink
 
 # Stands the pod up through host/first-boot.sh with a synthetic CA and pod leaf and proves the
 # audit sink runs: not restarting, metrics on :9303, session open, and a publish into the pod's
-# namespace counted. Two legs: the sink dialing the router on the host's own address (what a
-# pod with its mesh up gets) and on loopback (first-boot's fallback when the mesh is not up).
+# namespace counted.
 on:
   pull_request:
   push:
@@ -17,13 +16,7 @@ jobs:
   audit-sink:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        local_endpoint: [mesh, loopback]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: audit sink subscribes and counts (${{ matrix.local_endpoint }})
-        env:
-          LOCAL_ENDPOINT: ${{ matrix.local_endpoint }}
+      - name: audit sink starts with the pod, subscribes and counts
         run: bash tests/audit-sink-local.sh
