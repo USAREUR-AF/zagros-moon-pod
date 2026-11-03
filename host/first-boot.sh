@@ -206,7 +206,9 @@ echo "==> [5/6] writing compose/.env and starting the data plane"
 # this is the ONE place the local endpoint is decided, and it overrides any ZENOH_LOCAL_ENDPOINT
 # a profile carries. The mesh IP is assigned by netbird at enrollment; resolve it here (falls
 # back to loopback if the mesh client isn't up yet).
-MESH_IP="$(netbird status 2>/dev/null | sed -n 's/.*NetBird IP:[[:space:]]*\([0-9.]*\).*/\1/p' | head -1)"
+# `|| true`: with pipefail, a missing netbird or a stopped daemon would otherwise end the script
+# here instead of reaching the fallback below.
+MESH_IP="$( (netbird status 2>/dev/null || true) | sed -n 's/.*NetBird IP:[[:space:]]*\([0-9.]*\).*/\1/p' | head -1)"
 if [ -n "${MESH_IP}" ]; then
   ZENOH_LOCAL_HOST="${MESH_IP}"
   echo "    audit-sink endpoint = mesh IP ${MESH_IP} (loopback would collide with the router's TLS listener)"
