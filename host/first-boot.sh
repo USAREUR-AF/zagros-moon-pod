@@ -133,9 +133,14 @@ CTX_DIR="$(dirname "${CERT_PATH}")"
 
 # --- [2/6] Lay the pod's Zenoh mTLS material from the goat-cli-extracted certs -------------------
 echo "==> [2/6] laying Zenoh mTLS certs from the goat-cli profile"
-install -m 600 "${CTX_DIR}/mtls.cert.pem" "${ZENOH_TLS_DIR}/pod-cert.pem"
-install -m 600 "${CTX_DIR}/mtls.key.pem"  "${ZENOH_TLS_DIR}/pod-key.pem"
-install -m 600 "${CTX_DIR}/ca-roots.pem"  "${ZENOH_TLS_DIR}/ca-roots.pem"
+# Two containers read these: the router (root) and the audit sink, whose image runs as uid/gid
+# 65532 (compose pins `user: "65532:65532"`). Owner root, group 65532, mode 640: readable by both,
+# by nothing else. A root-only 600 leaves the sink unable to read its key, and zenoh reports that
+# as "Cannot create a new TLS listener ... Permission denied" while it is dialing, not listening.
+AUDIT_SINK_GID=65532
+install -m 640 -o root -g "${AUDIT_SINK_GID}" "${CTX_DIR}/mtls.cert.pem" "${ZENOH_TLS_DIR}/pod-cert.pem"
+install -m 640 -o root -g "${AUDIT_SINK_GID}" "${CTX_DIR}/mtls.key.pem"  "${ZENOH_TLS_DIR}/pod-key.pem"
+install -m 640 -o root -g "${AUDIT_SINK_GID}" "${CTX_DIR}/ca-roots.pem"  "${ZENOH_TLS_DIR}/ca-roots.pem"
 
 # --- [3/6] Render the pod Zenoh router config ---------------------------------------------------
 # The SIGNED BUNDLE is the single source of truth for the fabric router endpoint: `goat profile
