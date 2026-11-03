@@ -62,7 +62,7 @@ services:
     # burning cycles and teaching operators to ignore a restarting container). Opt in with
     # `docker compose --profile audit up` once the upstream fixes ship.
     profiles: ["audit"]
-    image: ghcr.io/usareur-af/goat-audit-subscriber:sha-51d9a8b@sha256:03cd651e180863d2ef4d32a881515c3e8f70b60b21f0484a46fd501b3903951d
+    image: ghcr.io/usareur-af/goat-audit-subscriber@sha256:6aacd50c4f6a8937e1750374a4e0b9a1150ddffe66a81d37fdb77c9e1ff49ae5
     container_name: goat-moon-audit-sink
     network_mode: host
     restart: unless-stopped
