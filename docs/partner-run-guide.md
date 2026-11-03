@@ -91,8 +91,7 @@ first-boot prints six numbered steps, in order: [1/6] verify the bundle + extrac
 (`goat profile init`) → [2/6] lay the Zenoh mTLS material → [3/6] render the router config
 (router endpoint **from the bundle**) → [4/6] import the bundle into `goat-clientd` — on the
 zagros sandbox this step prints **skipped**, which is normal (stock NetBird is the sandbox mesh
-client) → [5/6] start `zenoh-router` via compose (`audit-sink` is opt-in behind the
-`audit` profile — see Trouble) → [6/6] install the `goat-doctor` health timer.
+client) → [5/6] start `zenoh-router` and `audit-sink` via compose → [6/6] install the `goat-doctor` health timer.
 
 ### Trust your goatnet's CA root
 
@@ -245,13 +244,13 @@ today — declare anyway; the contract requires it and production enforces it.
   cause is a root added without `GOAT_PROFILE_DIR`, which lands in `~/.goat` instead of the
   pod's state volume; the second is the root of a different goatnet than the one that signed
   your bundle (the error names the CA-ID it wants).
-- **Where is `goat-moon-audit-sink`?** Audit observation is opt-in and currently broken
-  upstream, so a plain `up` does not start it (the service sits behind the compose `audit`
-  profile). Known v0 issue against the local router, two upstream defects: the subscriber
-  image binds a competing TLS listener, and the pod's clientAuth-only leaf is rejected as a
-  server cert by EKU-checking clients. Your data plane is unaffected — the router,
-  `goat doctor`, and slot pub/sub all work. Nothing to fix on your host; once the upstream
-  fixes ship, start it with `sudo docker compose -f compose/docker-compose.yml --profile audit up -d`.
+- **`goat-moon-audit-sink` is missing or restarting:** it starts with the router and
+  subscribes to your namespace on the local router. Check it with
+  `curl -s http://127.0.0.1:9303/metrics | grep ^goat_audit_`:
+  `goat_audit_subscriber_session_state 1` means it is subscribed, and `goat_audit_samples_total`
+  counts what it has seen. If it logs `Permission denied` while opening its session, it cannot
+  read the TLS files: re-run first-boot, which lays them as `root:65532`, mode `0640`. The data
+  plane does not depend on the sink.
 - **`goat doctor` router check fails:** confirm the mesh is up (`netbird status` → Connected) and
   that the bundle hasn't expired (`goat profile show`). The router endpoint the pod uses comes
   from the bundle, so a stale bundle points at the wrong place — get a fresh one.
