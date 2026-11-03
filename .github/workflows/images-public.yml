@@ -1,0 +1,24 @@
+name: images-public
+
+# Every image the pod's compose files name must be pullable without
+# credentials: a partner's pod has none. Runs on every change and daily,
+# because an image can be made private or deleted after its pin lands.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  images-public:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: every pod image is anonymously pullable
+        run: bash tests/check-images-public.sh
