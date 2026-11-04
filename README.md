@@ -191,4 +191,4 @@ reimplementing the equivalent shell. `shellcheck -x` scripts you touch.
 
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE).
+`zagros-moon-pod` was written by U.S. Federal government employees. In the U.S. it is not subject to copyright and is in the public domain; in countries where copyright is recognized, it is released under the [Apache License 2.0](LICENSE). See [INTENT.md](INTENT.md).
