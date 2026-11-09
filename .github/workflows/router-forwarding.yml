@@ -1,0 +1,21 @@
+name: router-forwarding
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  router-forwarding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Fabric certificate identity is verified and bounded
+        run: bash tests/fabric-peer-identity-local.sh
+      - name: Fabric wildcard interest forwards only allowed POD data
+        run: bash tests/router-forwarding-local.sh

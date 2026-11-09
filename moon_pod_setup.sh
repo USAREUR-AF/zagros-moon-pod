@@ -303,7 +303,7 @@ run_part1() {
         fi
     fi
 
-    step "1.2  envsubst"
+    step "1.2  envsubst + OpenSSL"
     if command -v envsubst >/dev/null 2>&1; then
         ok "envsubst already present: $(envsubst --version | head -1)"
     else
@@ -311,6 +311,17 @@ run_part1() {
             && apt-get -o DPkg::Lock::Timeout=180 install -y -qq gettext-base \
             && ok "installed gettext-base (envsubst)" \
             || fail "failed to install gettext-base"
+    fi
+    if command -v openssl >/dev/null 2>&1; then
+        ok "OpenSSL already present: $(openssl version)"
+    else
+        if apt-get -o DPkg::Lock::Timeout=180 update -qq \
+            && apt-get -o DPkg::Lock::Timeout=180 install -y -qq openssl
+        then
+            ok "installed OpenSSL"
+        else
+            fail "failed to install OpenSSL"
+        fi
     fi
 
     step "1.3  Mesh client - NetBird (install)"
@@ -603,6 +614,7 @@ UNIT
     printf "  %-42s %s\n" "64-bit Linux host"          "$([ -n "$GOAT_ARCH" ] && echo PASS || echo FAIL)"
     printf "  %-42s %s\n" "Docker + compose plugin"    "$(docker compose version >/dev/null 2>&1 && echo PASS || echo FAIL)"
     printf "  %-42s %s\n" "envsubst"                   "$(command -v envsubst >/dev/null 2>&1 && echo PASS || echo FAIL)"
+    printf "  %-42s %s\n" "OpenSSL"                    "$(command -v openssl >/dev/null 2>&1 && echo PASS || echo FAIL)"
     printf "  %-42s %s\n" "netbird installed"          "$(command -v netbird >/dev/null 2>&1 && echo PASS || echo FAIL)"
     printf "  %-42s %s\n" "netbird joined mesh"        "$(mesh_peers_connected_probe && echo PASS || echo "FAIL/NOT JOINED")"
     printf "  %-42s %s\n" "goat on PATH"                "$(command -v goat >/dev/null 2>&1 && echo PASS || echo FAIL)"
@@ -738,6 +750,12 @@ run_part2() {
         && ok "docker + compose plugin present" || { fail "docker + compose plugin missing"; PREFLIGHT_OK=0; }
     command -v envsubst >/dev/null 2>&1 \
         && ok "envsubst present" || { fail "envsubst missing"; PREFLIGHT_OK=0; }
+    if command -v openssl >/dev/null 2>&1; then
+        ok "OpenSSL present"
+    else
+        fail "OpenSSL missing"
+        PREFLIGHT_OK=0
+    fi
     command -v netbird >/dev/null 2>&1 \
         && ok "netbird installed" || { fail "netbird not installed"; PREFLIGHT_OK=0; }
     command -v goat >/dev/null 2>&1 \
@@ -862,7 +880,7 @@ run_part2() {
     trust_ca_root || return 1
 
     step "2.6  host/first-boot.sh $PROFILE_NAME $BUNDLE_PATH"
-    info "watch the six numbered steps below. On the zagros sandbox, [4/6] (goat-clientd import) printing 'skipped' is normal."
+    info "watch the six numbered steps below. On the zagros sandbox, [3/6] (goat-clientd import) printing 'skipped' is normal."
     if ( cd "$REPO_DIR" && ./host/first-boot.sh "$PROFILE_NAME" "$BUNDLE_PATH" ); then
         ok "first-boot.sh completed"
     else
@@ -917,10 +935,9 @@ run_part2() {
         warn "PART 2 finished with smoke-check failures above - Part 3 will diagnose in detail."
     fi
     echo "  health:  GOAT_PROFILE_DIR=$GOAT_PROFILE_DIR goat doctor --all"
-    echo "  round-trip: docker stop goat-moon-zenoh-router, then"
-    echo "              GOAT_PROFILE_DIR=$GOAT_PROFILE_DIR goat pub '${PARTNER_NAMESPACE}/test/ping' --payload-file /tmp/ping"
-    echo "              GOAT_PROFILE_DIR=$GOAT_PROFILE_DIR goat flow '${PARTNER_NAMESPACE}/test/ping' --since 5m"
-    echo "              then docker start goat-moon-zenoh-router (the running router holds the pod's one fabric transport)"
+    echo "  delivery: keep goat-moon-zenoh-router running and publish a unique key through"
+    echo "            tls/127.0.0.1:7447 with your normal application or clients/ example;"
+    echo "            require both the local audit metric and portal catalog count to rise"
     if [ -n "${NETBIRD_KEY_SPENT_THIS_RUN:-}" ]; then
         warn "reminder: blank NETBIRD_SETUP_KEY now (or forget the env var) - it was just spent, it is single-use."
     fi
@@ -996,12 +1013,12 @@ A stale bundle points the router config at the wrong endpoint - get a fresh one 
 
     step "3.4/5  Round-trip - publish, then confirm on the audit tail"
     echo "hi" > /tmp/ping
-    # The fabric allows exactly one transport per pod identity (the slot cert pins
-    # the session ZID) and the running router holds it - a live host-side sub can
-    # only race the router for that transport, so it proves nothing. Per the
-    # pod-verify skill's step 4: stop the router, publish, then read the audit
-    # tail. 'goat flow --since' reads via a portal-presigned URL using the
-    # profile's portal token - no second fabric transport needed.
+    # This is the legacy direct-to-fabric probe. It predates the running-router
+    # delivery verdict and does not exercise the router ACL. The fabric allows one
+    # transport per pod identity, and the running router holds it, so a live
+    # host-side subscriber can only race the router and proves nothing. The separate
+    # setup-verdict change will replace this probe. 'goat flow --since' reads via a
+    # portal-presigned URL using the profile token, so it needs no second transport.
     echo "  stopping goat-moon-zenoh-router (frees the pod identity's one fabric transport)"
     docker stop goat-moon-zenoh-router >/dev/null 2>&1 || true
     echo "  publishing to '${PARTNER_NAMESPACE}/test/ping' (INSIDE your slot - never a different namespace)"
@@ -1118,10 +1135,9 @@ Check: systemctl status goat-doctor.timer   and   systemctl list-timers | grep g
     done
     echo
     echo "  health:  GOAT_PROFILE_DIR=$GOAT_PROFILE_DIR goat doctor --all"
-    echo "  round-trip: docker stop goat-moon-zenoh-router, then"
-    echo "              GOAT_PROFILE_DIR=$GOAT_PROFILE_DIR goat pub '${PARTNER_NAMESPACE}/test/ping' --payload-file /tmp/ping"
-    echo "              GOAT_PROFILE_DIR=$GOAT_PROFILE_DIR goat flow '${PARTNER_NAMESPACE}/test/ping' --since 5m"
-    echo "              then docker start goat-moon-zenoh-router (the running router holds the pod's one fabric transport)"
+    echo "  delivery: keep goat-moon-zenoh-router running and publish a unique key through"
+    echo "            tls/127.0.0.1:7447 with your normal application or clients/ example;"
+    echo "            require both the local audit metric and portal catalog count to rise"
     return 0
 }
 
@@ -1182,7 +1198,7 @@ gate_part1() {
     echo
     hr "$CYAN"; echo "${CYAN}${BOLD}  PART 1 / 3 -- HOST BRING-UP${RESET}"; hr "$CYAN"
     echo "  What this does:"
-    echo "    Installs Docker+compose, envsubst, NetBird, the goat CLI, joins the mesh"
+    echo "    Installs Docker+compose, envsubst, OpenSSL, NetBird, the goat CLI, joins the mesh"
     echo "    (spends NETBIRD_SETUP_KEY once), and creates/mounts the LUKS state volume."
     echo
     echo "  Current state:"
@@ -1240,8 +1256,9 @@ gate_part3() {
     hr "$BLUE"; echo "${BLUE}${BOLD}  PART 3 / 3 -- VERIFY${RESET}"; hr "$BLUE"
     echo "  What this does:"
     echo "    Live health ladder: mesh status -> goat doctor --all -> container check ->"
-    echo "    publish + audit-tail round-trip inside your slot (stops and restarts the"
-    echo "    router, retrying the audit-tail read a few times - it's eventually consistent,"
+    echo "    legacy direct-to-fabric publish + audit-tail probe (does not exercise the"
+    echo "    router ACL; it stops and restarts the router, retrying the audit-tail read"
+    echo "    a few times - it's eventually consistent,"
     echo "    not instant - so the router can stay down up to"
     echo "    ~$(( ROUND_TRIP_TIMEOUT * (ROUND_TRIP_FLOW_TRIES + 1) + ROUND_TRIP_FLOW_RETRY_DELAY * (ROUND_TRIP_FLOW_TRIES - 1) ))s) -> confirms the doctor timer is advancing (polls up to"
     echo "    ~$(( DOCTOR_TIMER_POLL_INTERVAL * DOCTOR_TIMER_TRIES ))s - a freshly-installed timer's first tick can land"

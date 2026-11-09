@@ -1,6 +1,6 @@
 ---
 name: pod-host-bringup
-description: Use when preparing hardware to run the moon-pod - flashing a Raspberry Pi or readying any Linux host, installing Docker, goat, NetBird, or envsubst, creating the LUKS state volume, or when a fresh host cannot be found on the network, refuses SSH, or has no internet. Triggers - "set up the pi", "flash a pod host", "prepare a host for the pod", "install the prerequisites", "pod-ready checklist".
+description: Use when preparing hardware to run the moon-pod - flashing a Raspberry Pi or readying any Linux host, installing Docker, goat, NetBird, envsubst, or OpenSSL, creating the LUKS state volume, or when a fresh host cannot be found on the network, refuses SSH, or has no internet. Triggers - "set up the pi", "flash a pod host", "prepare a host for the pod", "install the prerequisites", "pod-ready checklist".
 ---
 
 # Pod host bring-up

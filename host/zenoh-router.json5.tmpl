@@ -14,6 +14,8 @@
 //   ${PARTNER_NAMESPACE}      the pod's first-party write/read prefix (its slot, or release/<partner>)
 //   ${INBOUND_NAMESPACE}      the bilateral prefix the fabric publishes TO the pod (profile-driven;
 //                             NOT hardcoded to any stack — e.g. release/goat when bilateral)
+//   ${POD_CERT_CN}             common name on the pod/client mTLS certificate
+//   ${FABRIC_ROUTER_CERT_CN}   common name on the authenticated fabric router certificate
 //   ${POD_CERT_PEM}           pod leaf cert  (from goat profile init: mtls.cert.pem)
 //   ${POD_KEY_PEM}            pod leaf key   (from goat profile init: mtls.key.pem)
 //   ${CA_ROOTS_PEM}           CA roots       (from goat profile init: ca-roots.pem) — from the BUNDLE
@@ -70,24 +72,68 @@
         key_exprs: ["${PARTNER_NAMESPACE}/**"],
       },
       {
-        // Inbound bilateral data from goat: subscribe/deliver only (no pod writes here).
-        // Prefix is profile-driven (${INBOUND_NAMESPACE}), never hardcoded to a stack.
-        id: "pod-inbound",
-        messages: ["declare_subscriber", "query", "put", "reply", "liveliness_token", "declare_liveliness_subscriber", "liveliness_query"],
-        flows: ["egress", "ingress"],
+        // A local client may express interest in bilateral data, but may not publish into the
+        // fabric-owned inbound namespace. The matching egress grants below carry that interest
+        // to the fabric and deliver its data back to the local client.
+        id: "pod-inbound-local-interest",
+        messages: ["declare_subscriber", "query", "declare_liveliness_subscriber", "liveliness_query"],
+        flows: ["ingress"],
         permission: "allow",
         key_exprs: ["${INBOUND_NAMESPACE}/**"],
+      },
+      {
+        id: "pod-inbound-local-delivery",
+        messages: ["put", "declare_queryable", "reply", "liveliness_token"],
+        flows: ["egress"],
+        permission: "allow",
+        key_exprs: ["${INBOUND_NAMESPACE}/**"],
+      },
+      {
+        // The authenticated fabric router may originate data and responses in the inbound
+        // namespace. It receives only the interest sent by pod-local clients.
+        id: "pod-inbound-fabric-data",
+        messages: ["put", "declare_queryable", "reply", "liveliness_token"],
+        flows: ["ingress"],
+        permission: "allow",
+        key_exprs: ["${INBOUND_NAMESPACE}/**"],
+      },
+      {
+        id: "pod-inbound-fabric-interest",
+        messages: ["declare_subscriber", "query", "declare_liveliness_subscriber", "liveliness_query"],
+        flows: ["egress"],
+        permission: "allow",
+        key_exprs: ["${INBOUND_NAMESPACE}/**"],
+      },
+      {
+        // Fabric services advertise cross-tenant interest (for example */**) through the
+        // authenticated upstream router. Accept only subscription declarations, only as they
+        // enter this router, and never grant a wider data operation.
+        id: "fabric-interest",
+        messages: ["declare_subscriber"],
+        flows: ["ingress"],
+        permission: "allow",
+        key_exprs: ["**"],
       },
     ],
     subjects: [
       {
-        // Any mTLS peer rooted in the bundle's CA (pod-local clients + the goat side).
-        id: "mtls-peer",
-        link_protocols: ["tls"],
+        // Pod-local clients use the pod identity extracted from the signed bundle.
+        id: "pod-peer",
+        cert_common_names: ["${POD_CERT_CN}"],
+        link_protocols: ["tls", "quic"],
+      },
+      {
+        // Only the upstream router may introduce fabric-wide subscription interest.
+        id: "fabric-peer",
+        cert_common_names: ["${FABRIC_ROUTER_CERT_CN}"],
+        link_protocols: ["tls", "quic"],
       },
     ],
     policies: [
-      { rules: ["pod-firstparty", "pod-inbound"], subjects: ["mtls-peer"] },
+      { rules: ["pod-firstparty"], subjects: ["pod-peer", "fabric-peer"] },
+      { rules: ["pod-inbound-local-interest", "pod-inbound-local-delivery"], subjects: ["pod-peer"] },
+      { rules: ["pod-inbound-fabric-data", "pod-inbound-fabric-interest"], subjects: ["fabric-peer"] },
+      { rules: ["fabric-interest"], subjects: ["fabric-peer"] },
     ],
   },
 }

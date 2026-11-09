@@ -60,6 +60,14 @@ it is idempotent (re-renders config, re-applies compose, rotates the profile if 
 | `PARTNER_NAMESPACE must be set in the profile` | the variable is unset or empty — `profiles/zagros-local/profile.env` lost the line, or the profile name given to first-boot does not match the copy you filled |
 | `PARTNER_NAMESPACE still carries the CHANGE-ME placeholder` | `profiles/zagros-local/profile.env` was copied but the slot id was never filled in |
 | `no CA root is trusted under ...`, `This machine trusts no CA roots`, or `does not trust that CA` | the pod's trust store lacks the goatnet's root — sequence step 3 was skipped, or the root was added without `GOAT_PROFILE_DIR` and sits in `~/.goat`. The bundle is fine and nothing was consumed; do NOT request a new one |
+| `pod identity check failed: certificate CN is missing or unsupported` | the issued pod certificate has no supported CN; the goat-side operator reissues it with a CN using the documented character set, then the partner re-runs first-boot |
+| `fabric identity check failed: the TLS endpoint has no supported host:port` | the bundle/profile endpoint is malformed; the goat-side operator corrects the endpoint in a new bundle, or the partner corrects a hand-validation fallback, then re-runs |
+| `fabric identity check failed: the CA-verified mTLS handshake did not verify` | first-boot could not authenticate and identify the upstream router; the partner confirms NetBird and endpoint reachability, the goat-side operator confirms the endpoint certificate and CA, then the partner re-runs |
+| `fabric identity check failed: router certificate CN has unsupported characters` | the router identity cannot be represented safely in the ACL; the goat-side operator corrects its certificate, then the partner re-runs |
+| `fabric identity check failed: ZENOH_FABRIC_CERT_CN contains unsupported characters` | the configured pin cannot be represented safely in the ACL; the goat-side operator confirms a CN using the documented character set, then the partner corrects the active profile and re-runs |
+| `fabric identity check failed: router CN does not match the configured pin` | the TLS pin and presented router CN differ; the goat-side operator confirms the current CN, then the partner corrects the active profile and re-runs |
+| `fabric identity check failed: non-TLS endpoint has no router certificate CN pin` | OpenSSL cannot inspect this transport; the goat-side operator supplies the expected CN through the trusted onboarding channel, then the partner sets `ZENOH_FABRIC_CERT_CN` and re-runs |
+| `fabric identity check failed: router and pod certificate CNs are identical` | the ACL cannot separate pod and router privileges; the goat-side operator issues distinct identities, then the partner re-runs. Never substitute the pod CN for the router CN |
 | bundle expiry / activation-deadline error | lapsed bundle; ask the goat side for a fresh one, do not edit the bundle |
 
 ## Rules

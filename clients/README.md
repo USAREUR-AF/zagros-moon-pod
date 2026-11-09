@@ -57,6 +57,10 @@ export GOAT_CA="/var/lib/goat-moon/goat-cli/contexts/default/ca-roots.pem"
 export GOAT_NAMESPACE="<your-slot-on-zagros>"   # release/acme is the production shape
 ```
 
+Use the certificate and key extracted from this POD's own enrollment bundle. The router ACL now
+matches that certificate's CN; another certificate signed by the same CA can complete TLS but its
+publishes and subscriptions are silently denied.
+
 ## The one connection gotcha (read this — it bites everyone)
 
 Zenoh's TLS config must be inserted as **one whole block**, with **`enable_mtls: true`**. Setting

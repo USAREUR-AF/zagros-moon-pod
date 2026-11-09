@@ -3,8 +3,8 @@
 #
 # Turns a signed enrollment bundle + an environment profile into a running pod:
 #   [1] goat profile init (verify + extract certs) -> [2] lay Zenoh mTLS material ->
-#   [3] render router config -> [4] goat-clientd import + mesh service (skipped on the
-#   sandbox) -> [5] write compose/.env + docker compose up -> [6] goat-doctor timer.
+#   [3] goat-clientd import + mesh service (skipped on the sandbox) -> [4] verify the
+#   fabric peer + render router config -> [5] compose up -> [6] goat-doctor timer.
 #
 # goat-cli does the heavy lifting for the bundle: `goat profile init <bundle>` verifies the
 # ECDSA-over-canonical-CBOR signature, checks expiry/activation, and writes the mTLS material
@@ -32,13 +32,15 @@ PROFILE_ENV="${POD_DIR}/profiles/${PROFILE}/profile.env"
 [ -f "$BUNDLE" ]      || { echo "no such bundle: ${BUNDLE}"; exit 2; }
 
 # Tool presence — fail loud + early rather than midway.
-for t in goat envsubst docker; do
+for t in goat envsubst docker openssl timeout cmp mktemp sha256sum; do
   command -v "$t" >/dev/null 2>&1 || { echo "required tool not found on PATH: $t"; exit 2; }
 done
-command -v goat-clientd >/dev/null 2>&1 || echo "warning: goat-clientd not on PATH — mesh step [4/6] will be skipped"
+command -v goat-clientd >/dev/null 2>&1 || echo "warning: goat-clientd not on PATH — mesh step [3/6] will be skipped"
 
 # shellcheck disable=SC1090
 source "$PROFILE_ENV"
+# shellcheck source=host/fabric-peer-identity.sh
+source "${POD_DIR}/host/fabric-peer-identity.sh"
 : "${POD_STATE_DIR:=/var/lib/goat-moon}"
 : "${GOAT_CLIENT_MODE:=combined}"
 : "${ZENOH_LISTEN_PORT:=7447}"
@@ -56,8 +58,9 @@ esac
 # even when no bilateral inbound is granted yet.
 : "${INBOUND_NAMESPACE:=${PARTNER_NAMESPACE}}"
 # ZENOH_FABRIC_ENDPOINT: profile fallback ONLY; the bundle's router_endpoint takes precedence
-# (resolved from the bundle-derived profile.toml in step [3/6]).
+# (resolved from the bundle-derived profile.toml in step [4/6]).
 : "${ZENOH_FABRIC_ENDPOINT:=}"
+: "${ZENOH_FABRIC_CERT_CN:=}"
 
 echo "==> goat-moon-pod first-boot (profile=${PROFILE}, state=${POD_STATE_DIR})"
 echo "    WARNING: ${POD_STATE_DIR} MUST be on the partner's LUKS-encrypted volume."
@@ -138,46 +141,21 @@ echo "==> [2/6] laying Zenoh mTLS certs from the goat-cli profile"
 # by nothing else. A root-only 600 leaves the sink unable to read its key, and zenoh reports that
 # as "Cannot create a new TLS listener ... Permission denied" while it is dialing, not listening.
 AUDIT_SINK_GID=65532
-install -m 640 -o root -g "${AUDIT_SINK_GID}" "${CTX_DIR}/mtls.cert.pem" "${ZENOH_TLS_DIR}/pod-cert.pem"
-install -m 640 -o root -g "${AUDIT_SINK_GID}" "${CTX_DIR}/mtls.key.pem"  "${ZENOH_TLS_DIR}/pod-key.pem"
-install -m 640 -o root -g "${AUDIT_SINK_GID}" "${CTX_DIR}/ca-roots.pem"  "${ZENOH_TLS_DIR}/ca-roots.pem"
+install -m 600 -o root "${CTX_DIR}/mtls.cert.pem" "${ZENOH_TLS_DIR}/pod-cert.pem"
+install -m 600 -o root "${CTX_DIR}/mtls.key.pem"  "${ZENOH_TLS_DIR}/pod-key.pem"
+install -m 600 -o root "${CTX_DIR}/ca-roots.pem"  "${ZENOH_TLS_DIR}/ca-roots.pem"
+chown "root:${AUDIT_SINK_GID}" "${ZENOH_TLS_DIR}/pod-cert.pem" \
+  "${ZENOH_TLS_DIR}/pod-key.pem" "${ZENOH_TLS_DIR}/ca-roots.pem"
+chmod 640 "${ZENOH_TLS_DIR}/pod-cert.pem" "${ZENOH_TLS_DIR}/pod-key.pem" \
+  "${ZENOH_TLS_DIR}/ca-roots.pem"
 
-# --- [3/6] Render the pod Zenoh router config ---------------------------------------------------
-# The SIGNED BUNDLE is the single source of truth for the fabric router endpoint: `goat profile
-# init` wrote the bundle's goat_cli_extras.router_endpoint into profile.toml. We read it from
-# there so the pod follows the bundle, never a stale profile constant. The ZENOH_FABRIC_ENDPOINT
-# profile var is a fallback only (hand-driven validation, or a bundle that omitted the field).
-echo "==> [3/6] rendering Zenoh router config"
-PROFILE_TOML="$(find "${GOAT_PROFILE_DIR}" -name profile.toml -print -quit 2>/dev/null || true)"
-BUNDLE_ROUTER=""
-if [ -n "${PROFILE_TOML}" ] && [ -f "${PROFILE_TOML}" ]; then
-  BUNDLE_ROUTER="$(sed -n 's/^[[:space:]]*router_endpoint[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${PROFILE_TOML}" | head -1)"
-fi
-if [ -n "${BUNDLE_ROUTER}" ]; then
-  ZENOH_FABRIC_ENDPOINT="${BUNDLE_ROUTER}"
-  echo "    router endpoint from bundle: ${ZENOH_FABRIC_ENDPOINT}"
-elif [ -n "${ZENOH_FABRIC_ENDPOINT}" ]; then
-  echo "    router endpoint from profile fallback (bundle carried none): ${ZENOH_FABRIC_ENDPOINT}"
-else
-  echo "ZENOH_FABRIC_ENDPOINT unset and the bundle carried no router_endpoint — cannot render"; exit 1
-fi
-export ZENOH_LISTEN_PORT ZENOH_FABRIC_ENDPOINT PARTNER_NAMESPACE INBOUND_NAMESPACE
-export POD_CERT_PEM="/etc/zenoh/tls/pod-cert.pem"   # in-container paths (compose mounts ZENOH_TLS_DIR ro)
-export POD_KEY_PEM="/etc/zenoh/tls/pod-key.pem"
-export CA_ROOTS_PEM="/etc/zenoh/tls/ca-roots.pem"
-envsubst \
-  '${ZENOH_LISTEN_PORT} ${ZENOH_FABRIC_ENDPOINT} ${PARTNER_NAMESPACE} ${INBOUND_NAMESPACE} ${POD_CERT_PEM} ${POD_KEY_PEM} ${CA_ROOTS_PEM}' \
-  < "${POD_DIR}/host/zenoh-router.json5.tmpl" \
-  > "${POD_STATE_DIR}/zenoh/config.json5"
-echo "    wrote ${POD_STATE_DIR}/zenoh/config.json5"
-
-# --- [4/6] Bring up the host mesh daemon (goat-clientd) -----------------------------------------
-echo "==> [4/6] importing bundle into goat-clientd (mode=${GOAT_CLIENT_MODE})"
+# --- [3/6] Bring up the host mesh daemon (goat-clientd) -----------------------------------------
+echo "==> [3/6] importing bundle into goat-clientd (mode=${GOAT_CLIENT_MODE})"
 if ! command -v goat-clientd >/dev/null 2>&1; then
   echo "    skipped (goat-clientd not installed; the sandbox uses stock netbird). Bring the mesh up via"
   echo "    netbird, or install goat-clientd then re-run for the production mesh path."
-# A mesh failure here must not kill the data plane: warn and keep going (the operator can fix
-# the mesh and re-run; steps [5/6] and [6/6] are independent of it).
+# A mesh failure here must not kill the later local data-plane start: warn and keep going. The
+# router-identity check in step [4/6] still fails closed if the fabric route is unavailable.
 # Must stay an `&&` chain, NOT a `( set -e; ... )` subshell: bash suppresses errexit (inner
 # set -e included) inside an if/elif condition, so a mid-block failure would fall through and
 # enable a bundle-less service that crashloops under Restart=always.
@@ -198,10 +176,70 @@ elif
 then
   echo "    goat-clientd enabled; verify mesh with: goat doctor"
 else
-  echo "    warning: goat-clientd mesh setup FAILED — continuing so the data plane still starts."
+  echo "    warning: goat-clientd mesh setup FAILED — continuing to the fabric identity check."
   echo "    The service needs out-of-band host prep (a goat-client service user + config.toml;"
   echo "    see host/goat-clientd.service.example). Fix the mesh, then re-run this script."
 fi
+
+# --- [4/6] Verify the fabric peer and render the pod Zenoh router config -------------------------
+# The SIGNED BUNDLE is the single source of truth for the fabric router endpoint: `goat profile
+# init` wrote the bundle's goat_cli_extras.router_endpoint into profile.toml. We read it from
+# there so the pod follows the bundle, never a stale profile constant. The ZENOH_FABRIC_ENDPOINT
+# profile var is a fallback only (hand-driven validation, or a bundle that omitted the field).
+echo "==> [4/6] verifying fabric peer and rendering Zenoh router config"
+PROFILE_TOML="$(find "${GOAT_PROFILE_DIR}" -name profile.toml -print -quit 2>/dev/null || true)"
+BUNDLE_ROUTER=""
+if [ -n "${PROFILE_TOML}" ] && [ -f "${PROFILE_TOML}" ]; then
+  BUNDLE_ROUTER="$(sed -n 's/^[[:space:]]*router_endpoint[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${PROFILE_TOML}" | head -1)"
+fi
+if [ -n "${BUNDLE_ROUTER}" ]; then
+  ZENOH_FABRIC_ENDPOINT="${BUNDLE_ROUTER}"
+  echo "    router endpoint from bundle: ${ZENOH_FABRIC_ENDPOINT}"
+elif [ -n "${ZENOH_FABRIC_ENDPOINT}" ]; then
+  echo "    router endpoint from profile fallback (bundle carried none): ${ZENOH_FABRIC_ENDPOINT}"
+else
+  echo "ZENOH_FABRIC_ENDPOINT unset and the bundle carried no router_endpoint — cannot render"; exit 1
+fi
+
+POD_CERT_CN="$(certificate_cn "${CTX_DIR}/mtls.cert.pem")" || POD_CERT_CN=""
+
+# ACLs must distinguish the upstream router from pod-local clients: only the router may send
+# fabric-wide subscription declarations. TLS endpoints are always checked with a CA-verified,
+# mutually authenticated handshake; a configured pin must match what the endpoint presents.
+# Other transports cannot be inspected by openssl and therefore require an operator-provided pin.
+echo "    discovering fabric router certificate identity"
+resolve_fabric_certificate_cn "${ZENOH_FABRIC_ENDPOINT}" "${ZENOH_FABRIC_CERT_CN}" \
+  "${POD_CERT_CN}" "${CTX_DIR}/mtls.cert.pem" "${CTX_DIR}/mtls.key.pem" \
+  "${CTX_DIR}/ca-roots.pem" || exit 1
+echo "    fabric router certificate CN: ${FABRIC_ROUTER_CERT_CN}"
+export ZENOH_LISTEN_PORT ZENOH_FABRIC_ENDPOINT PARTNER_NAMESPACE INBOUND_NAMESPACE
+export POD_CERT_CN FABRIC_ROUTER_CERT_CN
+export POD_CERT_PEM="/etc/zenoh/tls/pod-cert.pem"   # in-container paths (compose mounts ZENOH_TLS_DIR ro)
+export POD_KEY_PEM="/etc/zenoh/tls/pod-key.pem"
+export CA_ROOTS_PEM="/etc/zenoh/tls/ca-roots.pem"
+CONFIG_OUT="${POD_STATE_DIR}/zenoh/config.json5"
+CONFIG_TMP="$(mktemp "${CONFIG_OUT}.tmp.XXXXXX")"
+cleanup_config_tmp() { [ -z "${CONFIG_TMP:-}" ] || rm -f "${CONFIG_TMP}"; }
+trap cleanup_config_tmp EXIT
+envsubst \
+  '${ZENOH_LISTEN_PORT} ${ZENOH_FABRIC_ENDPOINT} ${PARTNER_NAMESPACE} ${INBOUND_NAMESPACE} ${POD_CERT_CN} ${FABRIC_ROUTER_CERT_CN} ${POD_CERT_PEM} ${POD_KEY_PEM} ${CA_ROOTS_PEM}' \
+  < "${POD_DIR}/host/zenoh-router.json5.tmpl" \
+  > "${CONFIG_TMP}"
+if [ ! -f "${CONFIG_OUT}" ] || ! cmp -s "${CONFIG_TMP}" "${CONFIG_OUT}"; then
+  chmod 600 "${CONFIG_TMP}"
+  mv "${CONFIG_TMP}" "${CONFIG_OUT}"
+  CONFIG_TMP=""
+  echo "    wrote changed ${CONFIG_OUT}"
+else
+  rm -f "${CONFIG_TMP}"
+  CONFIG_TMP=""
+  echo "    router config unchanged: ${CONFIG_OUT}"
+fi
+CONFIG_SHA="$(sha256sum "${CONFIG_OUT}" | cut -d' ' -f1)"
+CONFIG_APPLIED_SHA_FILE="${POD_STATE_DIR}/zenoh/.config.applied.sha256"
+APPLIED_CONFIG_SHA="$(cat "${CONFIG_APPLIED_SHA_FILE}" 2>/dev/null || true)"
+RELOAD_REQUIRED=0
+[ "${CONFIG_SHA}" = "${APPLIED_CONFIG_SHA}" ] || RELOAD_REQUIRED=1
 
 # --- [5/6] Render compose .env and start the data plane -----------------------------------------
 echo "==> [5/6] writing compose/.env and starting the data plane"
@@ -222,14 +260,46 @@ ENV_OUT="${POD_DIR}/compose/.env"
 chmod 600 "${ENV_OUT}"
 echo "    wrote ${ENV_OUT}"
 
+ROUTER_WAS_RUNNING=0
+if [ "$(docker inspect -f '{{.State.Running}}' goat-moon-zenoh-router 2>/dev/null || true)" = "true" ]; then
+  ROUTER_WAS_RUNNING=1
+fi
 ( cd "${POD_DIR}/compose" && docker compose up -d )
+if [ "${RELOAD_REQUIRED}" -eq 1 ] && [ "${ROUTER_WAS_RUNNING}" -eq 1 ]; then
+  echo "    router has not loaded this config — restarting it now"
+  ( cd "${POD_DIR}/compose" && docker compose restart zenoh-router )
+elif [ "${RELOAD_REQUIRED}" -eq 0 ]; then
+  echo "    router already loaded this config — no router restart needed"
+fi
+
+ROUTER_HEALTH=""
+for _ in $(seq 1 60); do
+  ROUTER_STATE="$(docker inspect -f '{{.State.Status}}' goat-moon-zenoh-router 2>/dev/null || true)"
+  ROUTER_HEALTH="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' \
+    goat-moon-zenoh-router 2>/dev/null || true)"
+  [ "${ROUTER_STATE}" = "running" ] && [ "${ROUTER_HEALTH}" = "healthy" ] && break
+  case "${ROUTER_STATE}" in
+    created|exited|dead|restarting|removing|"")
+      echo "router failed to load the rendered config (state=${ROUTER_STATE:-missing})." >&2
+      docker logs goat-moon-zenoh-router 2>&1 | tail -n 20 >&2 || true
+      exit 1
+      ;;
+  esac
+  sleep 2
+done
+if [ "${ROUTER_STATE}" != "running" ] || [ "${ROUTER_HEALTH}" != "healthy" ]; then
+  echo "router did not become healthy after loading the rendered config." >&2
+  docker logs goat-moon-zenoh-router 2>&1 | tail -n 20 >&2 || true
+  exit 1
+fi
+printf '%s\n' "${CONFIG_SHA}" > "${CONFIG_APPLIED_SHA_FILE}"
 echo "    audit sink metrics: curl -s http://127.0.0.1:9303/metrics | grep ^goat_audit_"
 
 # --- [6/6] Install the host goat-doctor probe timer (goat-cli, no container) ---------------------
 # goat presence was hard-checked at the top of the script. systemd is NOT guaranteed: a
 # container, a chroot, or a minimal host has no systemctl (or has the binary with no running
 # systemd), and dying here under `set -e` would exit non-zero with the data plane already up.
-# Guard like step [4/6]: detect, skip loudly, leave the manual path on screen.
+# Guard like step [3/6]: detect, skip loudly, leave the manual path on screen.
 echo "==> [6/6] installing goat-doctor host timer"
 if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
   echo "    skipped (no running systemd on this host). The data plane is up; run the health"
@@ -250,8 +320,8 @@ fi
 
 echo "==> first-boot complete."
 echo "    health:  GOAT_PROFILE_DIR=${GOAT_PROFILE_DIR} goat doctor"
-echo "    publish: GOAT_PROFILE_DIR=${GOAT_PROFILE_DIR} goat pub ${PARTNER_NAMESPACE}/test/ping --payload-file /tmp/ping"
-echo "    inbound: GOAT_PROFILE_DIR=${GOAT_PROFILE_DIR} goat sub '${INBOUND_NAMESPACE}/**' --follow"
-echo "    note: stop goat-moon-zenoh-router while running pub/sub as the pod identity, then"
-echo "          start it again — the fabric allows one transport per identity and the running"
-echo "          router holds it (a pub with the router up is refused: MAX_LINKS)."
+echo "    local data endpoint: tls/127.0.0.1:${ZENOH_LISTEN_PORT}"
+echo "    publish/subscribe with your application or a client under clients/;"
+echo "      publish namespace: ${PARTNER_NAMESPACE}/**"
+echo "      inbound namespace: ${INBOUND_NAMESPACE}/**"
+echo "    Do not stop the router for a delivery check: that bypasses the pod data path."

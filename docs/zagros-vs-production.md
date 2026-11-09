@@ -12,7 +12,7 @@ any other goatnet) is a different bundle + profile, never a code change to the p
 | Axis | zagros (sandbox) | Production goat-net | How the pod stays agnostic |
 |---|---|---|---|
 | Zenoh topology | single router; peers dial it | per-site planes / multi-router + federation — **not fully settled** | router connect/listen endpoints come from the bundle (`router_endpoint`); pod does not assume a single router |
-| Zenoh ACL subject identity | `cert_common_names` (CN-keyed) | likely URI-SAN or other — **TBD** | the axis is baked into the router ACL template today (CN-keyed); a production axis change is a template change (reserved in the production profile TODO) |
+| Zenoh ACL subject identity | `cert_common_names` (CN-keyed) | likely URI-SAN or other — **TBD** | first-boot extracts the pod CN and verifies the connected fabric-router CN; a production axis change is a template change (reserved in the production profile TODO) |
 | Zenoh key-expr namespace | per-uuid **slot** (`<slot_id>/**`); flat community-read | `release/<partner>/**` (egress) + `release/goat/**` (ingress) | the write namespace is `PARTNER_NAMESPACE` and the bilateral inbound is `INBOUND_NAMESPACE` — both profile-driven, neither hardcoded |
 | Netbird / mesh mgmt | zagros sandbox mgmt + sandbox group taxonomy | **partner-net** (separate mgmt instance) + production group taxonomy | mgmt URL + setup key ride in the bundle (`InnerMeshSetup`); profile carries nothing site-internal |
 | PKI roots | shared dev sandbox CA | per-site production CA | fabric-TLS trust is the bundle's `ca_roots`; the root that verifies the bundle itself is added per goatnet with `goat ca add`. Neither is compiled in |
@@ -40,9 +40,20 @@ the operator adds that root once per goatnet (`goat ca add`, into the pod's prof
 [`partner-run-guide.md`](partner-run-guide.md#trust-your-goatnets-ca-root). It stays
 stack-agnostic the same way: a production CA is another root file, not another build.
 
+For a TLS router endpoint, first-boot derives the upstream router CN from a live, CA-verified mTLS
+handshake; an optional `ZENOH_FABRIC_CERT_CN` pin must match it. A non-TLS endpoint must provide
+that value from the goat-side operator through the trusted onboarding channel. The ACL never
+widens fabric subscription interest to every trusted peer.
+
+The current ACL supports one router CN per rendered pod config. An endpoint pool whose routers
+present different CNs is not supported: whichever CN was discovered would cause default-deny to
+silently block every other router. A production multi-router design must give the pool one shared
+authenticated identity or extend the profile/template to bind every approved router identity.
+
 The only values that legitimately live in the profile are the ones the bundle does *not* carry:
 the bilateral inbound prefix (`INBOUND_NAMESPACE`), audit retention, the mesh mode, and the
-ACL subject axis — and even those are plain config, swappable per environment.
+ACL subject axis (plus `ZENOH_FABRIC_CERT_CN` when non-TLS requires it or TLS is pinned) — and even
+those are plain config, swappable per environment.
 
 ## Goat-side dependencies the pod is built to plug into (not pod code)
 

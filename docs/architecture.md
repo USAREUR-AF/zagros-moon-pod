@@ -53,8 +53,8 @@ same clean routing a netns sidecar would give, but coupled to the stable host.
 1. Host: LUKS unlock → Docker up → the mesh client (stock NetBird on the sandbox, `goat-clientd`
    on the production path) brings the mesh up.
 2. `first-boot.sh` (once, six steps in this order): [1] verify bundle + extract certs
-   (`goat profile init`) → [2] lay the Zenoh mTLS material → [3] render the router config →
-   [4] `goat-clientd` import + mesh service (skipped on the sandbox) → [5] write `compose/.env` +
+   (`goat profile init`) → [2] lay the Zenoh mTLS material → [3] `goat-clientd` import + mesh
+   service (skipped on the sandbox) → [4] verify the fabric peer + render the router config → [5] write `compose/.env` +
    `docker compose up -d` → [6] install the `goat-doctor` timer.
 3. compose: `zenoh-router` (dials the fabric over the mesh) → `audit-sink` (subscribes once the
    router is local). `goat-doctor` runs as a HOST systemd timer (not compose) since goat-cli is

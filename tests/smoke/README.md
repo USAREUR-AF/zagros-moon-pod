@@ -1,26 +1,30 @@
-# moon-pod — bidirectional smoke test (spec — not yet runnable)
+# moon-pod — bidirectional smoke tests
 
-Specifies the gate that proves the v0 core: data moves **both directions** securely through the
-pod. This is a **spec with TODOs**, not a runnable harness yet — the assertions below are the
-acceptance bar for the `loopback.sh` implementation.
+The self-contained router path is runnable as `../router-forwarding-local.sh`; the remaining
+live-fabric checks below require an enrolled validation host.
 
 ## Two layers
 
 ### 1. Self-contained loopback (CI — no fabric needed)
 
-Stand up the pod's `zenoh-router` plus a **stub remote Zenoh** in one compose, both mTLS, and
-assert:
+`tests/router-forwarding-local.sh` stands up the pod's `zenoh-router` plus a **stub remote Zenoh**,
+both mTLS, and asserts:
 
 - **Outbound:** publish on `${PARTNER_NAMESPACE}/test/ping` at the pod side → received at the
   stub-remote side.
-- **Inbound:** publish on `release/goat/test/pong` at the stub-remote side → received via
-  `goat-cli sub` at the pod side.
+- **Inbound:** publish on `release/goat/test/pong` at the stub-remote side → received by a
+  slot-authenticated client at the pod side.
 - **ACL negative:** publish outside `${PARTNER_NAMESPACE}/**` → **denied** (default-deny holds).
-- **Audit:** TODO — becomes assertable once the audit-sink writes durable NDJSON (v0 is
-  observe-only; check the sink's Prometheus counters instead until then).
+- **Inbound direction:** with a distinct inbound prefix, a pod-local write into it is denied while
+  fabric-originated data is delivered; with the sandbox's shared slot/inbound prefix, normal slot
+  publishing remains allowed by the first-party rule.
+- **Interest routing:** a fabric subscriber on `*/**` receives the outbound slot publish, while a
+  pod-local `**` subscription is not accepted or propagated.
 
-This is the gate that will run in CI. TODO: implement `loopback.sh` + a stub-remote compose
-overlay.
+`tests/fabric-peer-identity-local.sh` also exercises the exact certificate-discovery helper sourced
+by first-boot: CA verification, TLS pin matching, endpoint parsing, safe CNs, and distinct pod/router
+identities. `.github/workflows/router-forwarding.yml` runs both gates in CI. The separate
+`tests/audit-sink-local.sh` workflow checks the observe-only sink's Prometheus counter.
 
 ### 2. Live zagros-sandbox validation (slow step, on the validation host)
 
