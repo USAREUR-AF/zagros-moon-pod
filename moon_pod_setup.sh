@@ -1017,8 +1017,8 @@ A stale bundle points the router config at the wrong endpoint - get a fresh one 
     # delivery verdict and does not exercise the router ACL. The fabric allows one
     # transport per pod identity, and the running router holds it, so a live
     # host-side subscriber can only race the router and proves nothing. The separate
-    # setup-verdict change will replace this probe. 'goat flow --since' reads via a
-    # portal-presigned URL using the profile token, so it needs no second transport.
+    # setup-verdict change tracked in #6 will replace this probe. 'goat flow --since'
+    # reads via a portal-presigned URL using the profile token, so it needs no second transport.
     echo "  stopping goat-moon-zenoh-router (frees the pod identity's one fabric transport)"
     docker stop goat-moon-zenoh-router >/dev/null 2>&1 || true
     echo "  publishing to '${PARTNER_NAMESPACE}/test/ping' (INSIDE your slot - never a different namespace)"
@@ -1198,7 +1198,8 @@ gate_part1() {
     echo
     hr "$CYAN"; echo "${CYAN}${BOLD}  PART 1 / 3 -- HOST BRING-UP${RESET}"; hr "$CYAN"
     echo "  What this does:"
-    echo "    Installs Docker+compose, envsubst, OpenSSL, NetBird, the goat CLI, joins the mesh"
+    echo "    Installs Docker+compose, envsubst, OpenSSL, NetBird, and the goat CLI."
+    echo "    Joins the mesh"
     echo "    (spends NETBIRD_SETUP_KEY once), and creates/mounts the LUKS state volume."
     echo
     echo "  Current state:"

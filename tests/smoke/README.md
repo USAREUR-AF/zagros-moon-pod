@@ -18,8 +18,9 @@ both mTLS, and asserts:
 - **Inbound direction:** with a distinct inbound prefix, a pod-local write into it is denied while
   fabric-originated data is delivered; with the sandbox's shared slot/inbound prefix, normal slot
   publishing remains allowed by the first-party rule.
-- **Interest routing:** a fabric subscriber on `*/**` receives the outbound slot publish, while a
-  pod-local `**` subscription is not accepted or propagated.
+- **Interest routing:** a fabric subscriber on `*/**` receives the outbound slot publish. A
+  pod-local `**` subscription can match allowed traffic from another local pod session, but its
+  broad interest is not propagated upstream.
 
 `tests/fabric-peer-identity-local.sh` also exercises the exact certificate-discovery helper sourced
 by first-boot: CA verification, TLS pin matching, endpoint parsing, safe CNs, and distinct pod/router

@@ -233,8 +233,9 @@ host-side `goat pub` would compete for the identity or bypass the router rules u
 
 The current `moon_pod_setup.sh` Part 3 round-trip still stops the router and uses the older direct
 fabric path. That check does not exercise these router rules and is not the delivery verdict above;
-the separate setup-verdict change will replace it. If Part 3 is run in the meantime, it restarts
-the router before returning.
+the separate setup-verdict change tracked in
+[USAREUR-AF/zagros-moon-pod#6](https://github.com/USAREUR-AF/zagros-moon-pod/issues/6)
+will replace it. If Part 3 is run in the meantime, it restarts the router before returning.
 
 Your slot is the namespace your cert is bound to (the `PARTNER_NAMESPACE` first-boot reported). A
 publish **outside** your slot is silently denied — that is expected; publish only within it.

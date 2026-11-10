@@ -173,6 +173,26 @@ for tls_file in pod-cert.pem pod-key.pem ca-roots.pem; do
     || fail "$tls_file has ownership/mode $tls_mode, expected 0:65532 640"
 done
 
+log "re-running first-boot with an unchanged healthy router"
+unchanged_started_before="$(docker inspect -f '{{.State.StartedAt}}' "$ROUTER")"
+unchanged_applied_before="$(sudo cat "$STATE/zenoh/.config.applied.sha256")"
+# The invoking user owns WORK; only first-boot itself needs sudo.
+# shellcheck disable=SC2024
+sudo env PATH="${STUBS}:${PATH}" \
+  bash "${POD_DIR}/host/first-boot.sh" "${PROFILE_NAME}" "${WORK}/pod.cbor" \
+  >"${WORK}/unchanged-rerun.log" 2>&1
+unchanged_started_after="$(docker inspect -f '{{.State.StartedAt}}' "$ROUTER")"
+unchanged_applied_after="$(sudo cat "$STATE/zenoh/.config.applied.sha256")"
+[ "$unchanged_started_before" = "$unchanged_started_after" ] \
+  || fail "unchanged first-boot re-run restarted the healthy router"
+[ "$unchanged_applied_before" = "$unchanged_applied_after" ] \
+  || fail "unchanged first-boot re-run changed the applied config hash"
+grep -Fq 'router config unchanged' "${WORK}/unchanged-rerun.log" \
+  || fail "unchanged first-boot re-run did not report the unchanged router config"
+grep -Fq 'router already loaded this config — no router restart needed' \
+  "${WORK}/unchanged-rerun.log" \
+  || fail "unchanged first-boot re-run did not explain why no restart was needed"
+
 # --- 4. Assertions -----------------------------------------------------------------------------------
 metric() {  # sum of every sample of a metric family
   curl -fsS "$METRICS" 2>/dev/null | awk -v m="$1" '$1 ~ "^"m"({|$)" {s+=$2} END {print s+0}'

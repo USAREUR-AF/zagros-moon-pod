@@ -178,7 +178,8 @@ elif
 then
   echo "    goat-clientd enabled; verify mesh with: goat doctor"
 else
-  echo "    warning: goat-clientd mesh setup FAILED — continuing to the fabric identity check."
+  echo "    warning: goat-clientd mesh setup FAILED."
+  echo "    Continuing to the fabric identity check."
   echo "    The service needs out-of-band host prep (a goat-client service user + config.toml;"
   echo "    see host/goat-clientd.service.example). Fix the mesh, then re-run this script."
 fi
@@ -198,9 +199,12 @@ if [ -n "${BUNDLE_ROUTER}" ]; then
   ZENOH_FABRIC_ENDPOINT="${BUNDLE_ROUTER}"
   echo "    router endpoint from bundle: ${ZENOH_FABRIC_ENDPOINT}"
 elif [ -n "${ZENOH_FABRIC_ENDPOINT}" ]; then
-  echo "    router endpoint from profile fallback (bundle carried none): ${ZENOH_FABRIC_ENDPOINT}"
+  echo "    router endpoint from profile fallback (bundle carried none):"
+  echo "      ${ZENOH_FABRIC_ENDPOINT}"
 else
-  echo "ZENOH_FABRIC_ENDPOINT unset and the bundle carried no router_endpoint — cannot render"; exit 1
+  echo "ZENOH_FABRIC_ENDPOINT is unset, and the bundle carried no router_endpoint."
+  echo "Cannot render the router config."
+  exit 1
 fi
 
 POD_CERT_CN="$(certificate_cn "${CTX_DIR}/mtls.cert.pem")" || POD_CERT_CN=""
