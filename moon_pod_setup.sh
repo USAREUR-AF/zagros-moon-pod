@@ -1199,8 +1199,8 @@ gate_part1() {
     hr "$CYAN"; echo "${CYAN}${BOLD}  PART 1 / 3 -- HOST BRING-UP${RESET}"; hr "$CYAN"
     echo "  What this does:"
     echo "    Installs Docker+compose, envsubst, OpenSSL, NetBird, and the goat CLI."
-    echo "    Joins the mesh"
-    echo "    (spends NETBIRD_SETUP_KEY once), and creates/mounts the LUKS state volume."
+    echo "    Joins the mesh, spending NETBIRD_SETUP_KEY once."
+    echo "    Creates and mounts the LUKS state volume."
     echo
     echo "  Current state:"
     mark_line "Docker + compose plugin present" docker_and_compose_probe

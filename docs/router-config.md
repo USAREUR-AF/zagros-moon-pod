@@ -216,9 +216,9 @@ on `**`, ingress only.
 That allowance is not attached to every mTLS peer. `first-boot.sh` verifies the upstream TLS
 certificate against the bundle CA and records its CN in the rendered `fabric-peer` subject. The
 pod leaf CN separately identifies local clients, and rendering refuses identical CNs because they
-would collapse the two subjects. A local `**` subscription can match allowed traffic from another
-local pod session, but its broad interest is not propagated upstream by default. A narrower
-expression would not cover all
+would collapse the two subjects. The router denies a local `**` declaration, so it neither
+receives data through the router nor propagates broad interest upstream. Only the authenticated
+`fabric-peer` may declare it. A narrower expression would not cover all
 authorized fabric consumers: `*/**` is the current audit/catalog shape and future permitted
 cross-slot expressions must also be representable. Widening the declaration key changes routing
 interest only; `put`, `delete`, `query`, `reply`, queryable, and liveliness permissions remain

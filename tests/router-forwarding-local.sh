@@ -107,11 +107,6 @@ if grep -Fq "$UNRESOLVED_PLACEHOLDER" "$WORK/pod.json5"; then
   echo "rendered router config still contains placeholders"
   exit 1
 fi
-if ! grep -Fq '{ rules: ["fabric-interest"], subjects: ["fabric-peer"] },' \
-  "$WORK/pod.json5"; then
-  echo "fabric-interest policy is missing or grants broad interest to a pod-local subject"
-  exit 1
-fi
 
 docker run -d --name "$POD_ROUTER" --network "$NETWORK" \
   -p "127.0.0.1:${POD_PORT}:7447" -v "$WORK:/work:ro" "$IMAGE" -c /work/pod.json5 >/dev/null
@@ -159,12 +154,25 @@ def publish_until(session, key, event, description, timeout=8):
             return
     raise AssertionError(f"timed out waiting for {description}")
 
+def declare_liveliness_until(session, key, event, description, timeout=8):
+    """Retry an allowed token declaration until its subscriber is live."""
+    deadline = time.monotonic() + timeout
+    event.clear()
+    while time.monotonic() < deadline:
+        token = session.liveliness().declare_token(key)
+        if event.wait(0.25):
+            return token
+        token.undeclare()
+    raise AssertionError(f"timed out waiting for {description}")
+
 last_error = None
 for _ in range(30):
     try:
         upstream = zenoh.open(config(upstream_port, "upstream"))
         pod = zenoh.open(config(pod_port, "pod"))
         pod_second = zenoh.open(config(pod_port, "pod"))
+        pod_wild = zenoh.open(config(pod_port, "pod"))
+        pod_control = zenoh.open(config(pod_port, "pod"))
         other = zenoh.open(config(pod_port, "other"))
         other_writer = zenoh.open(config(pod_port, "other"))
         break
@@ -174,7 +182,7 @@ for _ in range(30):
 else:
     raise AssertionError(f"routers did not become ready: {last_error}")
 
-with upstream, pod, pod_second, other, other_writer:
+with upstream, pod, pod_second, pod_wild, pod_control, other, other_writer:
     inbound_direction_violations = []
     upstream_keys = []
     outbound = threading.Event()
@@ -194,7 +202,7 @@ with upstream, pod, pod_second, other, other_writer:
 
     sentinel_number = [0]
 
-    def assert_local_put_denied(session, denied_key, message):
+    def assert_local_put_denied(session, denied_key, message, violations=None):
         """Prove a denied put cannot precede an allowed sentinel on the live route."""
         sentinel_number[0] += 1
         sentinel_key = f"{slot}/sentinel/{sentinel_number[0]}"
@@ -214,7 +222,9 @@ with upstream, pod, pod_second, other, other_writer:
         session.put(sentinel_key, "ordering-sentinel")
         wait_for(sentinel, f"ordering sentinel after denied put to {denied_key}")
         if denied_key in upstream_keys:
-            raise AssertionError(message)
+            if violations is None:
+                raise AssertionError(message)
+            violations.append(message)
         assert sentinel_sub
 
     assert_local_put_denied(
@@ -226,6 +236,7 @@ with upstream, pod, pod_second, other, other_writer:
         pod,
         f"{inbound}/test/local-write",
         "local publish into the fabric-owned inbound namespace escaped the pod router",
+        inbound_direction_violations,
     )
     # The other-CN identity has no allowed key for a same-session sentinel. Closing its dedicated
     # writer session flushes or discards every queued put before the already-proven POD route sends
@@ -285,50 +296,112 @@ with upstream, pod, pod_second, other, other_writer:
     inbound_liveliness_sub = pod.liveliness().declare_subscriber(
         inbound_liveliness_key, lambda _sample: inbound_liveliness_seen.set()
     )
-    fabric_token = upstream.liveliness().declare_token(inbound_liveliness_key)
-    wait_for(inbound_liveliness_seen, "fabric liveliness token at the pod client")
+    fabric_token = declare_liveliness_until(
+        upstream,
+        inbound_liveliness_key,
+        inbound_liveliness_seen,
+        "fabric liveliness token at the pod client",
+    )
 
     escaped_liveliness = threading.Event()
     local_liveliness_key = f"{inbound}/test/local-liveliness"
+    liveliness_sentinel_seen = threading.Event()
+    liveliness_sentinel_gone = threading.Event()
+    liveliness_sentinel_key = f"{slot}/test/liveliness-sentinel"
+
+    def record_fabric_liveliness(sample):
+        key = str(sample.key_expr)
+        if key == local_liveliness_key and sample.kind == zenoh.SampleKind.PUT:
+            escaped_liveliness.set()
+        elif key == liveliness_sentinel_key and sample.kind == zenoh.SampleKind.PUT:
+            liveliness_sentinel_seen.set()
+        elif key == liveliness_sentinel_key and sample.kind == zenoh.SampleKind.DELETE:
+            liveliness_sentinel_gone.set()
+
+    # Both exact declarations share one callback on the upstream session. Liveliness tokens have
+    # no caller-selectable priority, so the sentinel callback follows any earlier escaped token.
     fabric_liveliness_sub = upstream.liveliness().declare_subscriber(
-        local_liveliness_key, lambda _sample: escaped_liveliness.set()
+        local_liveliness_key, record_fabric_liveliness
     )
+    fabric_liveliness_sentinel_sub = upstream.liveliness().declare_subscriber(
+        liveliness_sentinel_key, record_fabric_liveliness
+    )
+    liveliness_readiness_token = declare_liveliness_until(
+        pod,
+        liveliness_sentinel_key,
+        liveliness_sentinel_seen,
+        "allowed liveliness readiness token at the fabric",
+    )
+    liveliness_sentinel_gone.clear()
+    liveliness_readiness_token.undeclare()
+    wait_for(liveliness_sentinel_gone, "allowed liveliness readiness token withdrawal")
+    liveliness_sentinel_seen.clear()
     local_token = pod.liveliness().declare_token(local_liveliness_key)
-    if escaped_liveliness.wait(3):
+    liveliness_sentinel_token = pod.liveliness().declare_token(liveliness_sentinel_key)
+    wait_for(liveliness_sentinel_seen, "allowed liveliness ordering sentinel at the fabric")
+    if escaped_liveliness.is_set():
         inbound_direction_violations.append(
             "local liveliness token escaped into the fabric-owned inbound namespace"
         )
 
     wildcard_keys = []
-    wildcard_seen = threading.Event()
 
     def record_wildcard(sample):
         wildcard_keys.append(str(sample.key_expr))
-        wildcard_seen.set()
 
-    local_wildcard = pod.declare_subscriber(
+    # This session holds only the broad subscriber. Putting an exact subscriber beside it would
+    # let Zenoh dispatch a sample locally after routing it to the session for the exact match.
+    local_wildcard = pod_wild.declare_subscriber(
         "**", record_wildcard
     )
 
-    exact_keys = []
-    exact_seen = threading.Event()
-    exact_expr = f"{slot}/local-wildcard/**"
+    control_seen = threading.Event()
+    control_expr = f"{slot}/local-wildcard/**"
 
-    def record_exact(sample):
-        exact_keys.append(str(sample.key_expr))
-        exact_seen.set()
-
-    exact_sub = pod.declare_subscriber(exact_expr, record_exact)
+    control_sub = pod_control.declare_subscriber(
+        control_expr, lambda _sample: control_seen.set()
+    )
     readiness_key = f"{slot}/local-wildcard/readiness"
-    publish_until(pod_second, readiness_key, exact_seen,
-                  "second-session publish at the exact-key pod subscriber")
-    wait_for(wildcard_seen, "second-session publish at the pod-local wildcard subscriber")
-    if readiness_key not in wildcard_keys:
-        raise AssertionError("pod-local wildcard did not accept an allowed local publish")
+    publish_until(pod_second, readiness_key, control_seen,
+                  "local slot publish at the dedicated control subscriber")
 
-    # A local wildcard may match allowed data from another local POD session. The security
-    # boundary is that this broad declaration must not propagate to the upstream router. Remove
-    # the test's own upstream wildcard subscriber before inspecting publisher matching state.
+    # The query and put use DATA priority and blocking congestion control. Zenoh replies inherit
+    # the query QoS, so the callback's put precedes its reply on the publishing session's reliable
+    # link. Once pod_wild receives the reply, an accepted wildcard would already have seen the put.
+    barrier_priority = zenoh.Priority.DATA
+    barrier_congestion = zenoh.CongestionControl.BLOCK
+    barrier_key = f"{slot}/local-wildcard/barrier"
+    barrier_probe_key = f"{slot}/local-wildcard/probe"
+    barrier_reply_seen = threading.Event()
+
+    def answer_wildcard_barrier(query):
+        pod_second.put(
+            barrier_probe_key,
+            "wildcard-acceptance-probe",
+            priority=barrier_priority,
+            congestion_control=barrier_congestion,
+        )
+        query.reply(barrier_key, "barrier-reply")
+
+    wildcard_barrier_queryable = pod_second.declare_queryable(
+        barrier_key, answer_wildcard_barrier
+    )
+    wildcard_keys.clear()
+    deadline = time.monotonic() + 8
+    while not barrier_reply_seen.is_set() and time.monotonic() < deadline:
+        pod_wild.get(
+            barrier_key,
+            handler=lambda reply: barrier_reply_seen.set() if reply.ok else None,
+            priority=barrier_priority,
+            congestion_control=barrier_congestion,
+        )
+        barrier_reply_seen.wait(0.25)
+    if not barrier_reply_seen.is_set():
+        raise AssertionError("wildcard acceptance ordering barrier did not reply")
+    if barrier_probe_key in wildcard_keys:
+        raise AssertionError("router accepted a pod-local ** subscription")
+
+    # Remove the test's own upstream wildcard subscriber before inspecting publisher matching.
     fabric_sub.undeclare()
     allowed_publisher = upstream.declare_publisher(f"{slot}/local-wildcard/matching")
     broad_publisher = upstream.declare_publisher("outside/local-wildcard/matching")
@@ -341,18 +414,33 @@ with upstream, pod, pod_second, other, other_writer:
         raise AssertionError("pod-local wildcard subscription propagated upstream")
 
     outside_key = "outside/fabric/blocked"
-    inbound_sentinel = f"{inbound}/test/ordering-sentinel"
-    inbound_sentinel_seen = threading.Event()
-    inbound_sentinel_sub = pod.declare_subscriber(
-        inbound_sentinel, lambda _sample: inbound_sentinel_seen.set()
+    outside_barrier_key = f"{slot}/local-wildcard/outside-barrier"
+    outside_reply_seen = threading.Event()
+
+    def answer_outside_barrier(query):
+        upstream.put(
+            outside_key,
+            "must-not-arrive",
+            priority=barrier_priority,
+            congestion_control=barrier_congestion,
+        )
+        query.reply(outside_barrier_key, "barrier-reply")
+
+    outside_barrier_queryable = upstream.declare_queryable(
+        outside_barrier_key, answer_outside_barrier
     )
-    publish_until(upstream, inbound_sentinel, inbound_sentinel_seen,
-                  "allowed inbound sentinel for the fabric denial")
     wildcard_keys.clear()
-    inbound_sentinel_seen.clear()
-    upstream.put(outside_key, "must-not-arrive")
-    upstream.put(inbound_sentinel, "ordering-sentinel")
-    wait_for(inbound_sentinel_seen, "inbound ordering sentinel after denied fabric put")
+    deadline = time.monotonic() + 8
+    while not outside_reply_seen.is_set() and time.monotonic() < deadline:
+        pod_wild.get(
+            outside_barrier_key,
+            handler=lambda reply: outside_reply_seen.set() if reply.ok else None,
+            priority=barrier_priority,
+            congestion_control=barrier_congestion,
+        )
+        outside_reply_seen.wait(0.25)
+    if not outside_reply_seen.is_set():
+        raise AssertionError("out-of-scope fabric ordering barrier did not reply")
     if outside_key in wildcard_keys:
         raise AssertionError("out-of-scope fabric publish reached a pod-local wildcard subscriber")
 
@@ -394,14 +482,16 @@ with upstream, pod, pod_second, other, other_writer:
         raise AssertionError("other-CN session received a slot publish")
 
     # Keep declarations alive until every assertion has completed.
-    assert all((allowed_publisher, broad_publisher, other_write_barrier, inbound_sub, inbound_queryable,
-                inbound_liveliness_sub, fabric_token, fabric_liveliness_sub, local_token,
-                local_wildcard, exact_sub, inbound_sentinel_sub, other_slot_sub,
+    assert all((allowed_publisher, broad_publisher, other_write_barrier, inbound_sub,
+                inbound_queryable, inbound_liveliness_sub, fabric_token,
+                fabric_liveliness_sub, fabric_liveliness_sentinel_sub, local_token,
+                liveliness_sentinel_token, local_wildcard, control_sub,
+                wildcard_barrier_queryable, outside_barrier_queryable, other_slot_sub,
                 pod_slot_sub, pod_read_barrier))
     if inbound_direction_violations:
         raise AssertionError("; ".join(inbound_direction_violations))
 
-print("PASS: fabric wildcard interest forwards slot data; data ACLs and local wildcard propagation remain closed")
+print("PASS: fabric wildcard interest forwards slot data; data ACLs and local wildcard default remain closed")
 PY
 then
   dump
