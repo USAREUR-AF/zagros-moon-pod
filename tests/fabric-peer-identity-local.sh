@@ -173,12 +173,16 @@ expect_refusal "identical pod and router CNs" \
   resolve_fabric_certificate_cn "tls/127.0.0.1:${SERVER_PORT}" "" pod-client \
     "$WORK/pod.pem" "$WORK/pod.key" "$WORK/trusted-ca.pem"
 
-expect_refusal "a non-TLS endpoint without an operator-provided CN" \
-  'non-TLS endpoint has no router certificate CN pin' \
+expect_refusal "a QUIC endpoint without an operator-provided CN" \
+  'QUIC endpoint has no router certificate CN pin' \
   resolve_fabric_certificate_cn 'quic/router.example:7448' "" pod-client \
     "$WORK/pod.pem" "$WORK/pod.key" "$WORK/trusted-ca.pem"
 resolve_fabric_certificate_cn 'quic/router.example:7448' fabric-router pod-client \
   "$WORK/pod.pem" "$WORK/pod.key" "$WORK/trusted-ca.pem"
+expect_refusal "an unsupported endpoint transport even with a CN pin" \
+  'endpoint transport must be tls or quic' \
+  resolve_fabric_certificate_cn 'tcp/router.example:7447' fabric-router pod-client \
+    "$WORK/pod.pem" "$WORK/pod.key" "$WORK/trusted-ca.pem"
 expect_refusal "an empty pod certificate CN" \
   'pod identity check failed: certificate CN is missing or unsupported' \
   resolve_fabric_certificate_cn 'quic/router.example:7448' fabric-router "" \

@@ -46,9 +46,6 @@ cleanup() {
   docker rm -f "$UPSTREAM" >/dev/null 2>&1 || true
   sudo systemctl disable --now goat-doctor.timer >/dev/null 2>&1 || true
   sudo rm -f /etc/systemd/system/goat-doctor.service /etc/systemd/system/goat-doctor.timer
-  if [ -f "${WORK}/zenoh-router.json5.tmpl.backup" ]; then
-    cp "${WORK}/zenoh-router.json5.tmpl.backup" "$ROUTER_TEMPLATE"
-  fi
   sudo rm -rf "${WORK}" "${POD_DIR}/profiles/${PROFILE_NAME}" "${POD_DIR}/compose/.env"
 }
 trap cleanup EXIT
@@ -142,6 +139,28 @@ sed -e "s|^PARTNER_NAMESPACE=.*|PARTNER_NAMESPACE=${SLOT}|" "${POD_DIR}/profiles
 printf 'POD_STATE_DIR=%s\nPOD_ID=ci-pod\n' "$STATE" >> "${POD_DIR}/profiles/${PROFILE_NAME}/profile.env"
 : > "${WORK}/pod.cbor"   # placeholder bundle; the stub never reads it
 
+INVALID_ROUTER_TEMPLATE="${WORK}/invalid-zenoh-router.json5.tmpl"
+cp "$ROUTER_TEMPLATE" "$INVALID_ROUTER_TEMPLATE"
+printf '\nthis is not valid json5\n' >> "$INVALID_ROUTER_TEMPLATE"
+
+log "reporting an unhealthy router on the first run"
+# The invoking user owns WORK; only first-boot itself needs sudo.
+# shellcheck disable=SC2024
+if sudo env PATH="${STUBS}:${PATH}" \
+  ZENOH_ROUTER_TEMPLATE="$INVALID_ROUTER_TEMPLATE" \
+  bash "${POD_DIR}/host/first-boot.sh" "${PROFILE_NAME}" "${WORK}/pod.cbor" \
+  >"${WORK}/failed-first-run.log" 2>&1; then
+  fail "first-boot accepted an invalid router config on the first run"
+fi
+grep -Eq 'router failed to load|router did not become healthy' \
+  "${WORK}/failed-first-run.log" \
+  || fail "first-boot did not identify the unhealthy router on the first run"
+grep -Fq 'Partner next step: read the router log lines above.' \
+  "${WORK}/failed-first-run.log" \
+  || fail "first-boot gave no partner next step for the first-run router failure"
+[ ! -e "$STATE/zenoh/.config.applied.sha256" ] \
+  || fail "first-boot recorded the invalid first-run config as applied"
+
 log "host/first-boot.sh ${PROFILE_NAME}"
 sudo env PATH="${STUBS}:${PATH}" bash "${POD_DIR}/host/first-boot.sh" "${PROFILE_NAME}" "${WORK}/pod.cbor"
 sudo grep "^ZENOH_LOCAL_ENDPOINT=" "${POD_DIR}/compose/.env" | sed 's/^/    /'
@@ -228,24 +247,28 @@ config_after="$(sudo sha256sum "$STATE/zenoh/config.json5" | cut -d' ' -f1)"
 log "router restart applied changed render: ${started_before} -> ${started_after}"
 
 log "refusing to mark a router config applied when its restart fails"
-cp "$ROUTER_TEMPLATE" "${WORK}/zenoh-router.json5.tmpl.backup"
-applied_before_failure="$(sudo cat "$STATE/zenoh/.config.applied.sha256")"
-printf '\nthis is not valid json5\n' >> "$ROUTER_TEMPLATE"
-# The invoking user owns WORK; only first-boot itself needs sudo.
-# shellcheck disable=SC2024
-if sudo env PATH="${STUBS}:${PATH}" bash "${POD_DIR}/host/first-boot.sh" \
-  "${PROFILE_NAME}" "${WORK}/pod.cbor" >"${WORK}/failed-restart.log" 2>&1; then
-  fail "first-boot accepted a router that could not load its changed config"
-fi
-grep -Eq 'router failed to load|router did not become healthy' "${WORK}/failed-restart.log" \
-  || fail "first-boot failed without identifying the unhealthy router"
-applied_after_failure="$(sudo cat "$STATE/zenoh/.config.applied.sha256")"
-[ "$applied_before_failure" = "$applied_after_failure" ] \
-  || fail "first-boot recorded the rejected router config as applied"
-cp "${WORK}/zenoh-router.json5.tmpl.backup" "$ROUTER_TEMPLATE"
-sudo env PATH="${STUBS}:${PATH}" bash "${POD_DIR}/host/first-boot.sh" \
-  "${PROFILE_NAME}" "${WORK}/pod.cbor" >/dev/null
-[ "$(docker inspect -f '{{.State.Health.Status}}' "$ROUTER")" = healthy ] \
-  || fail "router did not recover after restoring the valid template"
-log "failed restart left the applied hash unchanged and the valid config recovered"
+for recovery_attempt in 1 2 3; do
+  applied_before_failure="$(sudo cat "$STATE/zenoh/.config.applied.sha256")"
+  failed_restart_log="${WORK}/failed-restart-${recovery_attempt}.log"
+  # The invoking user owns WORK; only first-boot itself needs sudo.
+  # shellcheck disable=SC2024
+  if sudo env PATH="${STUBS}:${PATH}" \
+    ZENOH_ROUTER_TEMPLATE="$INVALID_ROUTER_TEMPLATE" \
+    bash "${POD_DIR}/host/first-boot.sh" "${PROFILE_NAME}" "${WORK}/pod.cbor" \
+    >"$failed_restart_log" 2>&1; then
+    fail "first-boot accepted a router that could not load its changed config"
+  fi
+  grep -Eq 'router failed to load|router did not become healthy' "$failed_restart_log" \
+    || fail "first-boot failed without identifying the unhealthy router"
+  grep -Fq 'Partner next step: read the router log lines above.' "$failed_restart_log" \
+    || fail "first-boot did not give the partner a next step for the unhealthy router"
+  applied_after_failure="$(sudo cat "$STATE/zenoh/.config.applied.sha256")"
+  [ "$applied_before_failure" = "$applied_after_failure" ] \
+    || fail "first-boot recorded the rejected router config as applied"
+  sudo env PATH="${STUBS}:${PATH}" bash "${POD_DIR}/host/first-boot.sh" \
+    "${PROFILE_NAME}" "${WORK}/pod.cbor" >/dev/null
+  [ "$(docker inspect -f '{{.State.Health.Status}}' "$ROUTER")" = healthy ] \
+    || fail "router did not recover after restoring the valid template"
+done
+log "three failed restarts preserved the applied hash and recovered cleanly"
 log "PASS: audit sink subscribed and counted ${PUBLISH_COUNT} samples (endpoint ${ENDPOINT})"

@@ -114,15 +114,20 @@ resolve_fabric_certificate_cn() {
       fi
       FABRIC_ROUTER_CERT_CN="$discovered"
       ;;
-    *)
+    quic/*)
       if [ -z "$pinned_cn" ]; then
-        fabric_identity_error 'non-TLS endpoint has no router certificate CN pin.'
+        fabric_identity_error 'QUIC endpoint has no router certificate CN pin.'
         printf '    Goat-side operator: provide the expected CN through the trusted\n' >&2
         printf '    onboarding channel. Partner: set ZENOH_FABRIC_CERT_CN in the active\n' >&2
         printf '    profile, then re-run first-boot.\n' >&2
         return 1
       fi
       FABRIC_ROUTER_CERT_CN="$pinned_cn"
+      ;;
+    *)
+      fabric_identity_error 'endpoint transport must be tls or quic.'
+      fabric_operator_next_step
+      return 1
       ;;
   esac
 

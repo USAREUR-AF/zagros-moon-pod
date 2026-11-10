@@ -53,7 +53,7 @@ in this flow is re-runnable; this is the step to be slow on.
 It is `set -e`: it stops at the first broken step and names it. Fix the named thing and re-run;
 it is idempotent (re-renders config, re-applies compose, rotates the profile if one exists).
 
-| Message | Cause |
+| Message | Cause, owner, and next step |
 |---|---|
 | `required tool not found on PATH: ...` | pod-ready checklist was not actually green |
 | `no such profile: .../profiles/<name>/profile.env` | profile name typo, or the fill step was skipped |
@@ -66,9 +66,12 @@ it is idempotent (re-renders config, re-applies compose, rotates the profile if 
 | `fabric identity check failed: router certificate CN has unsupported characters` | the router identity cannot be represented safely in the ACL; the goat-side operator corrects its certificate, then the partner re-runs |
 | `fabric identity check failed: ZENOH_FABRIC_CERT_CN contains unsupported characters` | the configured pin cannot be represented safely in the ACL; the goat-side operator confirms a CN using the documented character set, then the partner corrects the active profile and re-runs |
 | `fabric identity check failed: router CN does not match the configured pin` | the TLS pin and presented router CN differ; the goat-side operator confirms the current CN, then the partner corrects the active profile and re-runs |
-| `fabric identity check failed: non-TLS endpoint has no router certificate CN pin` | OpenSSL cannot inspect this transport; the goat-side operator supplies the expected CN through the trusted onboarding channel, then the partner sets `ZENOH_FABRIC_CERT_CN` and re-runs |
+| `fabric identity check failed: QUIC endpoint has no router certificate CN pin` | OpenSSL cannot inspect QUIC; the goat-side operator supplies the expected CN through the trusted onboarding channel, then the partner sets `ZENOH_FABRIC_CERT_CN` and re-runs |
+| `fabric identity check failed: endpoint transport must be tls or quic` | the bundle/profile names an unsupported transport; the goat-side operator corrects the endpoint in a new bundle, or the partner corrects a hand-validation fallback, then re-runs |
 | `fabric identity check failed: router and pod certificate CNs are identical` | the ACL cannot separate pod and router privileges; the goat-side operator issues distinct identities, then the partner re-runs. Never substitute the pod CN for the router CN |
 | bundle expiry / activation-deadline error | lapsed bundle; ask the goat side for a fresh one, do not edit the bundle |
+| `router failed to load the rendered config (state=...).` | The router stopped while loading the render. `Partner next step: read the router log lines above. If a profile value caused the bad render, fix the local profile and re-run first-boot. Otherwise, send these log lines to the goat-side operator.` |
+| `router did not become healthy after loading the rendered config.` | The router stayed unhealthy for about two minutes. `Partner next step: read the router log lines above. If a profile value caused the bad render, fix the local profile and re-run first-boot. Otherwise, send these log lines to the goat-side operator.` |
 
 ## Rules
 

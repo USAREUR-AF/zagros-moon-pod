@@ -41,6 +41,8 @@ command -v goat-clientd >/dev/null 2>&1 || echo "warning: goat-clientd not on PA
 source "$PROFILE_ENV"
 # shellcheck source=host/fabric-peer-identity.sh
 source "${POD_DIR}/host/fabric-peer-identity.sh"
+# Test hook: production uses the shipped template; integration tests may render a temporary copy.
+: "${ZENOH_ROUTER_TEMPLATE:=${POD_DIR}/host/zenoh-router.json5.tmpl}"
 : "${POD_STATE_DIR:=/var/lib/goat-moon}"
 : "${GOAT_CLIENT_MODE:=combined}"
 : "${ZENOH_LISTEN_PORT:=7447}"
@@ -223,7 +225,7 @@ cleanup_config_tmp() { [ -z "${CONFIG_TMP:-}" ] || rm -f "${CONFIG_TMP}"; }
 trap cleanup_config_tmp EXIT
 envsubst \
   '${ZENOH_LISTEN_PORT} ${ZENOH_FABRIC_ENDPOINT} ${PARTNER_NAMESPACE} ${INBOUND_NAMESPACE} ${POD_CERT_CN} ${FABRIC_ROUTER_CERT_CN} ${POD_CERT_PEM} ${POD_KEY_PEM} ${CA_ROOTS_PEM}' \
-  < "${POD_DIR}/host/zenoh-router.json5.tmpl" \
+  < "${ZENOH_ROUTER_TEMPLATE}" \
   > "${CONFIG_TMP}"
 if [ ! -f "${CONFIG_OUT}" ] || ! cmp -s "${CONFIG_TMP}" "${CONFIG_OUT}"; then
   chmod 600 "${CONFIG_TMP}"
@@ -260,12 +262,24 @@ ENV_OUT="${POD_DIR}/compose/.env"
 chmod 600 "${ENV_OUT}"
 echo "    wrote ${ENV_OUT}"
 
+ROUTER_EXISTED=0
 ROUTER_WAS_RUNNING=0
-if [ "$(docker inspect -f '{{.State.Running}}' goat-moon-zenoh-router 2>/dev/null || true)" = "true" ]; then
-  ROUTER_WAS_RUNNING=1
-fi
-( cd "${POD_DIR}/compose" && docker compose up -d )
-if [ "${RELOAD_REQUIRED}" -eq 1 ] && [ "${ROUTER_WAS_RUNNING}" -eq 1 ]; then
+ROUTER_STATE_BEFORE="$(docker inspect -f '{{.State.Status}}' \
+  goat-moon-zenoh-router 2>/dev/null || true)"
+[ -z "${ROUTER_STATE_BEFORE}" ] || ROUTER_EXISTED=1
+[ "${ROUTER_STATE_BEFORE}" = "running" ] && ROUTER_WAS_RUNNING=1
+( cd "${POD_DIR}/compose" && docker compose up -d zenoh-router )
+ROUTER_STATE_AFTER_UP="$(docker inspect -f '{{.State.Status}}' \
+  goat-moon-zenoh-router 2>/dev/null || true)"
+ROUTER_HEALTH_AFTER_UP="$(docker inspect \
+  -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' \
+  goat-moon-zenoh-router 2>/dev/null || true)"
+if [ "${ROUTER_EXISTED}" -eq 1 ] && \
+  { [ "${ROUTER_STATE_AFTER_UP}" != "running" ] || \
+    [ "${ROUTER_HEALTH_AFTER_UP}" != "healthy" ]; }; then
+  echo "    router was not running and healthy — restarting it now"
+  ( cd "${POD_DIR}/compose" && docker compose restart zenoh-router )
+elif [ "${RELOAD_REQUIRED}" -eq 1 ] && [ "${ROUTER_WAS_RUNNING}" -eq 1 ]; then
   echo "    router has not loaded this config — restarting it now"
   ( cd "${POD_DIR}/compose" && docker compose restart zenoh-router )
 elif [ "${RELOAD_REQUIRED}" -eq 0 ]; then
@@ -273,6 +287,11 @@ elif [ "${RELOAD_REQUIRED}" -eq 0 ]; then
 fi
 
 ROUTER_HEALTH=""
+router_failure_guidance() {
+  echo "Partner next step: read the router log lines above. If a profile value" >&2
+  echo "caused the bad render, fix the local profile and re-run first-boot." >&2
+  echo "Otherwise, send these log lines to the goat-side operator." >&2
+}
 for _ in $(seq 1 60); do
   ROUTER_STATE="$(docker inspect -f '{{.State.Status}}' goat-moon-zenoh-router 2>/dev/null || true)"
   ROUTER_HEALTH="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' \
@@ -282,6 +301,7 @@ for _ in $(seq 1 60); do
     created|exited|dead|restarting|removing|"")
       echo "router failed to load the rendered config (state=${ROUTER_STATE:-missing})." >&2
       docker logs goat-moon-zenoh-router 2>&1 | tail -n 20 >&2 || true
+      router_failure_guidance
       exit 1
       ;;
   esac
@@ -290,9 +310,11 @@ done
 if [ "${ROUTER_STATE}" != "running" ] || [ "${ROUTER_HEALTH}" != "healthy" ]; then
   echo "router did not become healthy after loading the rendered config." >&2
   docker logs goat-moon-zenoh-router 2>&1 | tail -n 20 >&2 || true
+  router_failure_guidance
   exit 1
 fi
 printf '%s\n' "${CONFIG_SHA}" > "${CONFIG_APPLIED_SHA_FILE}"
+( cd "${POD_DIR}/compose" && docker compose up -d )
 echo "    audit sink metrics: curl -s http://127.0.0.1:9303/metrics | grep ^goat_audit_"
 
 # --- [6/6] Install the host goat-doctor probe timer (goat-cli, no container) ---------------------
@@ -324,4 +346,5 @@ echo "    local data endpoint: tls/127.0.0.1:${ZENOH_LISTEN_PORT}"
 echo "    publish/subscribe with your application or a client under clients/;"
 echo "      publish namespace: ${PARTNER_NAMESPACE}/**"
 echo "      inbound namespace: ${INBOUND_NAMESPACE}/**"
-echo "    Do not stop the router for a delivery check: that bypasses the pod data path."
+echo "    Do not stop the router for a delivery check:"
+echo "      that bypasses the pod data path."

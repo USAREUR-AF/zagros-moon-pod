@@ -296,9 +296,10 @@ next run. Change the input instead:
 
 Re-running `first-boot.sh <profile> <bundle>` is idempotent: it renders to a temporary file,
 replaces `config.json5` only when its content changed, applies the compose stack, and restarts an
-already-running router only after a changed render. A profile change is a re-render; a template
-change is a code change that goes through a PR (per `CONTRIBUTING.md`), because it affects every
-pod.
+already-running router after a changed render or when it was not healthy. It then waits up to about
+two minutes for the router to become healthy and records the rendered config as applied only after
+that succeeds. A profile change is a re-render; a template change is a code change that goes through
+a PR (per `CONTRIBUTING.md`), because it affects every pod.
 
 For the default TLS fabric endpoint, re-rendering performs a mutually authenticated handshake to
 discover the router CN. The handshake must validate against the bundle's CA or rendering stops.

@@ -114,9 +114,10 @@ sudo docker ps --filter name=goat-moon-zenoh-router
 
 An unchanged bundle is not consumed again: first-boot reports `profile present and bundle
 unchanged`. It replaces `config.json5` only when the rendered content changes and then restarts an
-already-running router so zenohd loads the new ACL. Confirm the file contains the `fabric-interest`
-rule and distinct `pod-peer` and `fabric-peer` subjects; never edit it by hand. Print both
-timestamps in UTC so they can be compared directly:
+already-running router so zenohd loads the new ACL. It waits up to about two minutes for the router
+to become healthy and records the render as applied only after that succeeds. Confirm the file
+contains the `fabric-interest` rule and distinct `pod-peer` and `fabric-peer` subjects; never edit
+it by hand. Print both timestamps in UTC so they can be compared directly:
 
 ```bash
 sudo date -u -r /var/lib/goat-moon/zenoh/config.json5 '+rendered %Y-%m-%dT%H:%M:%SZ'
