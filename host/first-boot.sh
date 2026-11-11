@@ -154,8 +154,9 @@ chmod 640 "${ZENOH_TLS_DIR}/pod-cert.pem" "${ZENOH_TLS_DIR}/pod-key.pem" \
 # --- [3/6] Bring up the host mesh daemon (goat-clientd) -----------------------------------------
 echo "==> [3/6] importing bundle into goat-clientd (mode=${GOAT_CLIENT_MODE})"
 if ! command -v goat-clientd >/dev/null 2>&1; then
-  echo "    skipped (goat-clientd not installed; the sandbox uses stock netbird). Bring the mesh up via"
-  echo "    netbird, or install goat-clientd then re-run for the production mesh path."
+  echo "    skipped (goat-clientd not installed; the sandbox uses stock netbird)."
+  echo "    Bring the mesh up with netbird, or install goat-clientd and re-run"
+  echo "    for the production mesh path."
 # A mesh failure here must not kill the later local data-plane start: warn and keep going. The
 # router-identity check in step [4/6] still fails closed if the fabric route is unavailable.
 # Must stay an `&&` chain, NOT a `( set -e; ... )` subshell: bash suppresses errexit (inner
@@ -489,7 +490,8 @@ fi
 record_applied_fabric_cn "${FABRIC_CN_APPLIED_FILE}" "${FABRIC_ROUTER_CERT_CN}"
 record_applied_config "${CONFIG_SHA}"
 ( cd "${POD_DIR}/compose" && docker compose up -d )
-echo "    audit sink metrics: curl -s http://127.0.0.1:9303/metrics | grep ^goat_audit_"
+echo "    audit sink metrics:"
+echo "      curl -s http://127.0.0.1:9303/metrics | grep ^goat_audit_"
 
 # --- [6/6] Install the host goat-doctor probe timer (goat-cli, no container) ---------------------
 # goat presence was hard-checked at the top of the script. systemd is NOT guaranteed: a
@@ -511,7 +513,8 @@ else
   cp "${POD_DIR}/host/goat-doctor.timer.example" /etc/systemd/system/goat-doctor.timer
   systemctl daemon-reload
   systemctl enable --now goat-doctor.timer
-  echo "    goat-doctor.timer enabled (status blob at ${POD_STATE_DIR}/doctor/status.json)"
+  echo "    goat-doctor.timer enabled"
+  echo "    status blob: ${POD_STATE_DIR}/doctor/status.json"
 fi
 
 echo "==> first-boot complete."
