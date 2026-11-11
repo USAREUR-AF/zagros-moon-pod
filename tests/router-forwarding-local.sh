@@ -185,12 +185,15 @@ else:
 with upstream, pod, pod_second, pod_wild, pod_control, other, other_writer:
     inbound_direction_violations = []
     upstream_keys = []
+    upstream_sentinels = {}
     outbound = threading.Event()
     outbound_key = f"{slot}/test/ping"
 
     def record_upstream(sample):
         key = str(sample.key_expr)
         upstream_keys.append(key)
+        if key in upstream_sentinels:
+            upstream_sentinels[key].set()
         if key == outbound_key:
             outbound.set()
 
@@ -208,24 +211,21 @@ with upstream, pod, pod_second, pod_wild, pod_control, other, other_writer:
         sentinel_key = f"{slot}/sentinel/{sentinel_number[0]}"
         sentinel = threading.Event()
 
-        def see_sentinel(sample):
-            if str(sample.key_expr) == sentinel_key:
-                sentinel.set()
-
-        sentinel_sub = upstream.declare_subscriber(sentinel_key, see_sentinel)
+        upstream_sentinels[sentinel_key] = sentinel
         publish_until(pod, sentinel_key, sentinel,
                       f"allowed sentinel for denial of {denied_key}")
         upstream_keys.clear()
         sentinel.clear()
         session.put(denied_key, "must-not-leave")
-        # The sentinel uses the same session and priority, so its arrival is an ordering barrier.
+        # The same callback observes both puts from the same session and priority, so seeing the
+        # sentinel proves that callback has already had the opportunity to record the denied key.
         session.put(sentinel_key, "ordering-sentinel")
         wait_for(sentinel, f"ordering sentinel after denied put to {denied_key}")
         if denied_key in upstream_keys:
             if violations is None:
                 raise AssertionError(message)
             violations.append(message)
-        assert sentinel_sub
+        del upstream_sentinels[sentinel_key]
 
     assert_local_put_denied(
         pod,
@@ -303,7 +303,6 @@ with upstream, pod, pod_second, pod_wild, pod_control, other, other_writer:
         "fabric liveliness token at the pod client",
     )
 
-    escaped_liveliness = threading.Event()
     local_liveliness_key = f"{inbound}/test/local-liveliness"
     liveliness_sentinel_seen = threading.Event()
     liveliness_sentinel_gone = threading.Event()
@@ -311,17 +310,16 @@ with upstream, pod, pod_second, pod_wild, pod_control, other, other_writer:
 
     def record_fabric_liveliness(sample):
         key = str(sample.key_expr)
-        if key == local_liveliness_key and sample.kind == zenoh.SampleKind.PUT:
-            escaped_liveliness.set()
-        elif key == liveliness_sentinel_key and sample.kind == zenoh.SampleKind.PUT:
+        if key == liveliness_sentinel_key and sample.kind == zenoh.SampleKind.PUT:
             liveliness_sentinel_seen.set()
         elif key == liveliness_sentinel_key and sample.kind == zenoh.SampleKind.DELETE:
             liveliness_sentinel_gone.set()
 
-    # Both exact declarations share one callback on the upstream session. Liveliness tokens have
-    # no caller-selectable priority, so the sentinel callback follows any earlier escaped token.
+    # Token declarations are reliable control messages on one session. Once the second declaration's
+    # sentinel arrives, the upstream router has processed both, although client callbacks can race.
+    # A completed current-state query reads the router's token table instead of racing those callbacks.
     fabric_liveliness_sub = upstream.liveliness().declare_subscriber(
-        local_liveliness_key, record_fabric_liveliness
+        local_liveliness_key, lambda _sample: None
     )
     fabric_liveliness_sentinel_sub = upstream.liveliness().declare_subscriber(
         liveliness_sentinel_key, record_fabric_liveliness
@@ -339,7 +337,10 @@ with upstream, pod, pod_second, pod_wild, pod_control, other, other_writer:
     local_token = pod.liveliness().declare_token(local_liveliness_key)
     liveliness_sentinel_token = pod.liveliness().declare_token(liveliness_sentinel_key)
     wait_for(liveliness_sentinel_seen, "allowed liveliness ordering sentinel at the fabric")
-    if escaped_liveliness.is_set():
+    liveliness_state = list(upstream.liveliness().get(local_liveliness_key, timeout=8))
+    if any(reply.err is not None for reply in liveliness_state):
+        raise AssertionError("upstream liveliness state query failed")
+    if any(reply.ok is not None for reply in liveliness_state):
         inbound_direction_violations.append(
             "local liveliness token escaped into the fabric-owned inbound namespace"
         )
