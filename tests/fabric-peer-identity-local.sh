@@ -125,10 +125,54 @@ expect_refusal() {
   fi
 }
 
+file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+
+resolve_recorded_identity() {
+  local pin="$1" recorded_file="$2" recorded
+  recorded="$(cat "$recorded_file" 2>/dev/null || true)"
+  resolve_fabric_certificate_cn "tls/127.0.0.1:${SERVER_PORT}" "$pin" pod-client \
+    "$WORK/pod.pem" "$WORK/pod.key" "$WORK/trusted-ca.pem" || return 1
+  check_fabric_identity_continuity "$FABRIC_ROUTER_CERT_CN" "$pin" "$recorded" \
+    || return 1
+  record_applied_fabric_cn "$recorded_file" "$FABRIC_ROUTER_CERT_CN"
+}
+
+run_continuity_case() {
+  local description="$1" cert_name="$2" pin="$3" initial="$4"
+  local outcome="$5" expected_message="$6" expected_record="$7"
+  local record_file="$WORK/recorded-${description//[^A-Za-z0-9]/-}"
+  [ -z "$initial" ] || record_applied_fabric_cn "$record_file" "$initial"
+  start_server "$cert_name" trusted
+  if [ "$outcome" = pass ]; then
+    if ! resolve_recorded_identity "$pin" "$record_file" \
+      >"$WORK/continuity.out" 2>&1; then
+      echo "continuity case failed: $description" >&2
+      cat "$WORK/continuity.out" >&2
+      exit 1
+    fi
+    [ "$(cat "$record_file")" = "$expected_record" ] \
+      || { echo "record was not updated: $description"; exit 1; }
+    [ "$(file_mode "$record_file")" = 600 ] \
+      || { echo "record mode is not 600: $description"; exit 1; }
+    if [ -n "$expected_message" ]; then
+      grep -Fq "$expected_message" "$WORK/continuity.out" \
+        || { echo "success message missing: $description"; exit 1; }
+    fi
+  else
+    expect_refusal "$description" "$expected_message" \
+      resolve_recorded_identity "$pin" "$record_file"
+    [ "$(cat "$record_file" 2>/dev/null || true)" = "$expected_record" ] \
+      || { echo "refusal changed the record: $description"; exit 1; }
+  fi
+}
+
 mint_ca trusted
 mint_ca untrusted
 mint_leaf pod pod-client trusted
 mint_leaf router fabric-router trusted
+mint_leaf router-next fabric-router-next trusted
 mint_leaf wrong-ca-router fabric-router untrusted
 mint_leaf unsafe-router 'fabric router' trusted
 mint_leaf same-cn pod-client trusted
@@ -192,4 +236,31 @@ expect_refusal "a TLS endpoint without a port" \
   resolve_fabric_certificate_cn 'tls/router.example#peer' "" pod-client \
     "$WORK/pod.pem" "$WORK/pod.key" "$WORK/trusted-ca.pem"
 
-echo "PASS: fabric peer discovery verifies trust, endpoint syntax, safe CNs, pins, and distinct identities"
+while IFS='|' read -r description cert_name pin initial outcome message expected; do
+  run_continuity_case "$description" "$cert_name" "$pin" "$initial" \
+    "$outcome" "$message" "$expected"
+done <<'CASES'
+first run records|router|||pass|accepted on first use|fabric-router
+unchanged rerun|router||fabric-router|pass||fabric-router
+changed CN without a pin|router-next||fabric-router|refuse|fabric router certificate name changed|fabric-router
+changed CN with a matching pin|router-next|fabric-router-next|fabric-router|pass||fabric-router-next
+changed CN with a non-matching pin|router-next|fabric-router|fabric-router|refuse|router CN does not match the configured pin|fabric-router
+CASES
+
+zid_one="$(derive_pod_router_zid pod-client)"
+zid_two="$(derive_pod_router_zid pod-client)"
+if [ "$zid_one" != "$zid_two" ] || ! valid_zenoh_zid "$zid_one"; then
+  echo "pod router ZID derivation is not stable and valid"
+  exit 1
+fi
+leading_zero_zid="$(derive_pod_router_zid synthetic-pod-15)"
+[ "$leading_zero_zid" = 4aa71f3952c83cb642e7a0bbbae7257 ] \
+  || { echo "pod router ZID did not strip the synthetic leading zero"; exit 1; }
+if grep -Eq '^ZENOH_FABRIC_CERT_CN=.' "$POD_DIR/profiles/zagros/profile.env"; then
+  echo "zagros profile assumes one fabric router certificate name"
+  exit 1
+fi
+grep -Fxq '# ZENOH_FABRIC_CERT_CN=' "$POD_DIR/profiles/zagros/profile.env" \
+  || { echo "zagros profile does not document the optional pin"; exit 1; }
+
+echo "PASS: fabric identity discovery, continuity, records, and router ZIDs are bounded"

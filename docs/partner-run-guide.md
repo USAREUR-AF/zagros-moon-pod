@@ -98,7 +98,9 @@ NetBird is the sandbox mesh client) → [4/6] verify the fabric peer and render 
 During [4/6], first-boot makes a CA-verified mTLS connection to the bundle's router endpoint and
 prints the fabric router certificate CN it bound into the ACL. If that identity cannot be
 verified, rendering stops; check the mesh and endpoint rather than copying an unverified CN into
-the profile.
+the profile. The zagros profile does not assume every endpoint role shares one certificate name.
+Without an onboarding pin, it accepts the verified name on first use and records it only after
+router health.
 
 ## Upgrade an existing pod for fabric forwarding
 
@@ -115,7 +117,9 @@ sudo docker ps --filter name=goat-moon-zenoh-router
 An unchanged bundle is not consumed again: first-boot reports `profile present and bundle
 unchanged`. It replaces `config.json5` only when the rendered content changes and then restarts an
 already-running router so zenohd loads the new ACL. It waits up to about two minutes for the router
-to become healthy and records the render as applied only after that succeeds. Confirm the file
+to become healthy and records the render and fabric identity as applied only after that succeeds.
+The upgrade also adds a deterministic router `id`, so the first run restarts once even when the
+ACL inputs did not change; later unchanged runs do not restart. Confirm the file
 contains the `fabric-interest` rule and distinct `pod-peer` and `fabric-peer` subjects; never edit
 it by hand. Print both timestamps in UTC so they can be compared directly:
 
@@ -127,6 +131,13 @@ sudo date -u -d "$(sudo docker inspect -f '{{.State.StartedAt}}' goat-moon-zenoh
 When the render changes, the router start time is later. When nothing changed, first-boot prints
 `router config unchanged` and does not restart the router; the older render time is also the
 expected passing state.
+
+Before replacing an applied configuration, first-boot saves one mode-`0600` last-known-good copy.
+If the new render is rejected and the POD and fabric certificate names are unchanged, it restores
+that copy, restarts once, reports that the previous configuration is running, and exits non-zero.
+Fix the named profile or template problem and re-run. It never rolls back across a certificate
+identity change; in that case it leaves the router stopped until the goat-side operator confirms
+the intended identities.
 
 The router now accepts local sessions only when their certificate CN matches the POD certificate.
 A different certificate signed by the same CA may complete TLS, but its operations are silently
@@ -146,12 +157,12 @@ running, retain the key and timestamp, and report the result to the goat-side op
 stop the router and publish directly to the fabric: that bypasses the path this check is meant to
 prove.
 
-If this check stops working after the fabric router certificate is renewed, the endpoint may now
-present a CN different from the rendered `fabric-peer`. Default-deny then blocks traffic in both
-directions without a client error. The goat-side operator owns confirmation of the endpoint's
-current identity; the partner re-runs first-boot to discover it, re-render, restart, and repeats the
-timestamp and delivery checks above. An endpoint pool whose routers present different CNs is not
-supported by this CN-bound ACL.
+If the endpoint presents a certificate name different from the last healthy run, first-boot stops
+before rendering. The goat-side operator owns confirmation of the new name through the trusted
+onboarding channel. The partner then sets the confirmed name as `ZENOH_FABRIC_CERT_CN` in the
+active profile, re-runs first-boot, and repeats the timestamp and delivery checks above. Do not
+copy the name from the error without that confirmation. An endpoint pool whose routers present
+different CNs is not supported by this CN-bound ACL.
 
 ### Trust your goatnet's CA root
 
@@ -304,6 +315,17 @@ today — declare anyway; the contract requires it and production enforces it.
 - **`goat doctor` router check fails:** confirm the mesh is up (`netbird status` → Connected) and
   that the bundle hasn't expired (`goat profile show`). The router endpoint the pod uses comes
   from the bundle, so a stale bundle points at the wrong place — get a fresh one.
+- **first-boot says `fabric router certificate name changed`:** the running router and applied
+  config were left untouched. The goat-side operator confirms the new name through the trusted
+  onboarding channel; the partner puts that confirmed value in `ZENOH_FABRIC_CERT_CN` and
+  re-runs. Do not accept the discovered value without confirmation.
+- **first-boot says the new configuration was rejected and the previous one is running:** rollback
+  preserved the data plane, but the run failed. Check the active profile for a bad value; if it is
+  correct, send the displayed router logs to the goat-side operator. Re-run after correcting the
+  cause.
+- **first-boot says rollback was refused because an identity differs:** the stopped router is the
+  safe state. The goat-side operator confirms the intended POD and fabric identities; the partner
+  corrects the bundle or profile and re-runs. Do not restore the saved file by hand.
 - **A container can't pull its image:** every pod image is public; run `tests/check-images-public.sh`
   to confirm reachability from your host.
 - **A publish "succeeds" but nothing arrives:** check you published *inside* your slot. Denials

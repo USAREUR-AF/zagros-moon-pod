@@ -41,7 +41,9 @@ summarize a failure as "network issues".
 |---|---|
 | `zenoh open failed … reason MAX_LINKS` | a host-side `goat pub` or `goat sub` is competing with the running router for the pod identity; use the local-router client path in step 4 instead |
 | Local audit count rises but catalog count does not | local delivery worked but fabric delivery is not confirmed; retain the key and timestamp and report it to the goat-side operator |
-| Delivery stopped after the fabric certificate changed | the rendered `fabric-peer` CN may be stale, so default-deny blocks both directions; the goat-side operator confirms the endpoint identity, then the partner re-runs first-boot and verifies its router restart |
+| `fabric router certificate name changed` | first-boot stopped before rendering. The goat-side operator confirms the new name through the trusted onboarding channel; the partner sets the confirmed `ZENOH_FABRIC_CERT_CN`, re-runs, and verifies the restart |
+| New router config was rejected; previous config is running | service was rolled back but the run failed. Check profile inputs, retain the displayed logs, correct the cause, and re-run |
+| Rollback refused after an identity change | leave the router stopped. The goat-side operator confirms the intended POD and fabric identities; correct the bundle or profile and re-run. Never restore the saved file by hand |
 | Publish vanishes / sub receives nothing inside the slot | [docs/router-config.md](../../../docs/router-config.md), ACL troubleshooting ladder |
 | Doctor router check fails | run-guide Trouble: mesh up? bundle expired? (`goat profile show`) |
 | Image pull failure | `tests/check-images-public.sh` from the repo root; egress problem if it fails |

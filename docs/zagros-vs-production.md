@@ -12,7 +12,7 @@ any other goatnet) is a different bundle + profile, never a code change to the p
 | Axis | zagros (sandbox) | Production goat-net | How the pod stays agnostic |
 |---|---|---|---|
 | Zenoh topology | single router; peers dial it | per-site planes / multi-router + federation — **not fully settled** | router connect/listen endpoints come from the bundle (`router_endpoint`); pod does not assume a single router |
-| Zenoh ACL subject identity | `cert_common_names` (CN-keyed) | likely URI-SAN or other — **TBD** | first-boot extracts the pod CN and verifies the connected fabric-router CN; a production axis change is a template change (reserved in the production profile TODO) |
+| Zenoh ACL subject identity | `cert_common_names` (CN-keyed); no default endpoint-name pin | likely URI-SAN or other — **TBD** | first-boot extracts the pod CN, verifies the connected fabric-router CN, and requires continuity with the last healthy run; a production axis change is a template change (reserved in the production profile TODO) |
 | Zenoh key-expr namespace | per-uuid **slot** (`<slot_id>/**`); flat community-read | `release/<partner>/**` (egress) + `release/goat/**` (ingress) | the write namespace is `PARTNER_NAMESPACE` and the bilateral inbound is `INBOUND_NAMESPACE` — both profile-driven, neither hardcoded |
 | Netbird / mesh mgmt | zagros sandbox mgmt + sandbox group taxonomy | **partner-net** (separate mgmt instance) + production group taxonomy | mgmt URL + setup key ride in the bundle (`InnerMeshSetup`); profile carries nothing site-internal |
 | PKI roots | shared dev sandbox CA | per-site production CA | fabric-TLS trust is the bundle's `ca_roots`; the root that verifies the bundle itself is added per goatnet with `goat ca add`. Neither is compiled in |
@@ -41,9 +41,14 @@ the operator adds that root once per goatnet (`goat ca add`, into the pod's prof
 stack-agnostic the same way: a production CA is another root file, not another build.
 
 For a TLS router endpoint, first-boot derives the upstream router CN from a live, CA-verified mTLS
-handshake; an optional `ZENOH_FABRIC_CERT_CN` pin must match it. A non-TLS endpoint must provide
-that value from the goat-side operator through the trusted onboarding channel. The ACL never
-widens fabric subscription interest to every trusted peer.
+handshake. The public core-router policy declares one name at
+[`cbf2cb7f`](https://github.com/USAREUR-AF/goatcore/blob/cbf2cb7f5147c5b7879f4d12420845b2e4d3a067/ops/ansible/roles/goat-zenoh/templates/config.json5.j2#L1624-L1634).
+That does not prove every endpoint role a POD bundle may name shares the core-router identity, so
+the zagros profile does not ship a default pin. It accepts a CA-verified name on first use, records
+it only after router health, and refuses an unconfirmed later change. Any configured
+`ZENOH_FABRIC_CERT_CN` must match TLS discovery. A
+non-TLS endpoint must provide that value from the goat-side operator through the trusted
+onboarding channel. The ACL never widens fabric subscription interest to every trusted peer.
 
 The current ACL supports one router CN per rendered pod config. An endpoint pool whose routers
 present different CNs is not supported: whichever CN was discovered would cause default-deny to
@@ -54,6 +59,11 @@ The only values that legitimately live in the profile are the ones the bundle do
 the bilateral inbound prefix (`INBOUND_NAMESPACE`), audit retention, the mesh mode, and the
 ACL subject axis (plus `ZENOH_FABRIC_CERT_CN` when non-TLS requires it or TLS is pinned) — and even
 those are plain config, swappable per environment.
+
+The router's own Zenoh ID is not an environment input. It is deterministically derived from the
+POD certificate CN with a `moon-pod-router` suffix, so restarts preserve topology identity without
+colliding with a slot-pinned publisher session. A failed changed render rolls back only when the
+saved POD and fabric certificate identities still match; identity changes fail stopped instead.
 
 ## Goat-side dependencies the pod is built to plug into (not pod code)
 

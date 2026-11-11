@@ -18,8 +18,9 @@ this file — it is generated for you. This doc is for understanding what got ge
   interest to the pod, but only the authenticated fabric-router certificate gets that grant;
   data operations remain restricted to the pod and inbound namespaces.
 - To change it, change a **profile var or the bundle** and re-run first-boot. It atomically
-  re-renders the file and restarts a running router when the content changed. Never edit the
-  rendered file by hand.
+  re-renders the file and restarts a running router when the content changed. A rejected render
+  rolls back to the last healthy configuration when the certificate identities are unchanged.
+  Never edit the rendered file by hand.
 
 ## The fabric endpoint
 
@@ -63,6 +64,7 @@ your real one comes from your bundle.
 
 ```json5
 {
+  id: "<stable-id-derived-from-the-pod-certificate-cn>",
   mode: "router",
 
   // (1) Local listen — pod-side clients (goat-cli pub/sub, the audit-sink) connect here over mTLS.
@@ -214,7 +216,13 @@ slot publish stay on the pod. The `fabric-interest` rule therefore accepts `decl
 on `**`, ingress only.
 
 That allowance is not attached to every mTLS peer. `first-boot.sh` verifies the upstream TLS
-certificate against the bundle CA and records its CN in the rendered `fabric-peer` subject. The
+certificate against the bundle CA and records its CN in the rendered `fabric-peer` subject. It
+also records that name only after the router is healthy. A later unpinned discovery must match the
+record. If it differs, rendering stops until the goat-side operator confirms the new name through
+the trusted onboarding channel and the partner supplies it as `ZENOH_FABRIC_CERT_CN`. An explicit
+pin must still match live TLS discovery, so it cannot conceal a different endpoint certificate.
+On the first unpinned run, first-boot says that the discovery was accepted on first use and how to
+pin it. The
 pod leaf CN separately identifies local clients, and rendering refuses identical CNs because they
 would collapse the two subjects. The router denies a local `**` declaration, so it neither
 receives data through the router nor propagates broad interest upstream. Only the authenticated
@@ -249,6 +257,16 @@ The pod router is about 140 lines and intentionally so. Three reasons:
    documented v0.x follow-up.) That removes the entire `plugins.storage_manager` block — volumes,
    per-prefix storages, retention/TTL, garbage-collection — that a persisting router carries.
 
+The router also has a deterministic Zenoh ID. First-boot hashes
+`<pod-certificate-CN>|moon-pod-router`, keeps the first 32 lowercase hexadecimal characters, and
+removes leading zeros before rendering. The separate suffix prevents a collision with local
+publisher sessions that use the slot anchor as their ID. The value is stable across router
+restarts and is not an authorization identity; the certificate subjects above remain the ACL
+axis. This follows the core router's public stable-ID and leading-zero rule
+([source](https://github.com/USAREUR-AF/goatcore/blob/cbf2cb7f5147c5b7879f4d12420845b2e4d3a067/ops/ansible/roles/goat-zenoh/defaults/main.yml#L140-L158))
+while staying distinct from the CLI's slot-pinned publisher session
+([source](https://github.com/USAREUR-AF/goatcore/blob/cbf2cb7f5147c5b7879f4d12420845b2e4d3a067/crates/goat-cli/src/cmd/pubsub.rs#L1207-L1227)).
+
 For contrast: a goat-side **core** router config is much larger because it carries all of the
 above — many tenants, many per-namespace rules, rocksdb storages with retention, an adminspace
 for live onboarding, a pinned router ZID, and HLC timestamping. The pod deliberately carries none
@@ -269,6 +287,7 @@ host/zenoh-router.json5.tmpl   ──envsubst──▶   ${POD_STATE_DIR}/zenoh/
 | Placeholder | Comes from | Notes |
 |---|---|---|
 | `${ZENOH_LISTEN_PORT}` | profile (default `7447`) | local listen port |
+| `${POD_ROUTER_ZID}` | derived from the pod certificate CN | deterministic router ID; validated as 1-32 lowercase hex characters with no leading zero |
 | `${ZENOH_FABRIC_ENDPOINT}` | **bundle** `router_endpoint` (profile is fallback only) | the goat-side endpoint dialled |
 | `${PARTNER_NAMESPACE}` | profile (your slot anchor) | your write/read prefix |
 | `${INBOUND_NAMESPACE}` | profile (defaults to your namespace when unset) | bilateral inbound prefix |
@@ -291,20 +310,29 @@ next run. Change the input instead:
 |---|---|---|
 | Your write namespace / slot | `PARTNER_NAMESPACE` in `profiles/<env>/profile.env` | re-run first-boot |
 | The fabric endpoint you dial | the **bundle** (preferred), or `ZENOH_FABRIC_ENDPOINT` fallback | re-run first-boot |
+| The expected fabric certificate name | `ZENOH_FABRIC_CERT_CN` in the profile, after confirmation through the trusted onboarding channel | re-run first-boot |
 | Add a bilateral inbound channel | uncomment/set `INBOUND_NAMESPACE` in the profile | re-run first-boot |
 | Local listen port | `ZENOH_LISTEN_PORT` in the profile | re-run first-boot |
 | The ACL shape itself (rare) | `host/zenoh-router.json5.tmpl` (the template) | open a PR — this is a scaffold change |
 
 Re-running `first-boot.sh <profile> <bundle>` is idempotent: it renders to a temporary file,
 replaces `config.json5` only when its content changed, applies the compose stack, and restarts an
-already-running router after a changed render or when it was not healthy. It then waits up to about
-two minutes for the router to become healthy and records the rendered config as applied only after
-that succeeds. A profile change is a re-render; a template change is a code change that goes through
-a PR (per `CONTRIBUTING.md`), because it affects every pod.
+already-running router after a changed render or when it was not healthy. Before replacing a
+previously applied file, it saves one mode-`0600` last-known-good copy. It then waits up to about
+two minutes for the router to become healthy and records the rendered config and fabric identity
+as applied only after that succeeds. A profile change is a re-render; a template
+change is a code change that goes through a PR (per `CONTRIBUTING.md`), because it affects every
+pod.
 
 For the default TLS fabric endpoint, re-rendering performs a mutually authenticated handshake to
 discover the router CN. The handshake must validate against the bundle's CA or rendering stops.
-An optional TLS `ZENOH_FABRIC_CERT_CN` must equal the discovered CN. For a QUIC endpoint, obtain
+Every core router uses the public name declared by the router certificate policy at
+[`cbf2cb7f`](https://github.com/USAREUR-AF/goatcore/blob/cbf2cb7f5147c5b7879f4d12420845b2e4d3a067/ops/ansible/roles/goat-zenoh/templates/config.json5.j2#L1624-L1634),
+but a POD bundle may name another endpoint role and no public source proves that every endpoint
+the zagros profile can reach shares that identity. The profile therefore leaves the pin commented
+instead of baking in a value observed from one POD. Its first TLS run accepts the CA-verified name
+on first use; later discovery must match the healthy recorded name. A configured TLS
+`ZENOH_FABRIC_CERT_CN` must equal the discovered CN. For a QUIC endpoint, obtain
 the expected router CN from the goat-side operator through the trusted onboarding channel and put
 it in `ZENOH_FABRIC_CERT_CN`; the script will not fall back to trusting every peer.
 The ACL subjects match certificate CNs on both TLS and QUIC links. The forwarding regression test
@@ -334,6 +362,15 @@ After a changed render, the router start time is later. If first-boot prints
 `router config unchanged`, it does not restart the router; an older render time is then the
 expected passing state.
 
+If a changed render fails and the saved POD and fabric certificate names still match the current
+inputs, first-boot restores the last-known-good file, restarts once, waits through the same bounded
+health check, and exits non-zero while reporting that the previous configuration is running. The
+applied hash always names that restored running file. Correct the input or template and re-run.
+If the saved identities differ, first-boot does not restore: doing so could re-admit a certificate
+the operator just replaced. It leaves the router stopped and asks the goat-side operator to confirm
+the identities. A first installation has no prior file to restore and therefore keeps the failed
+state and diagnostics.
+
 ## Validate + troubleshoot
 
 - **Is the JSON5 well-formed?** `sudo docker compose logs zenoh-router` — a parse error fails the
@@ -350,11 +387,18 @@ expected passing state.
 - **Rendering cannot verify the fabric router CN.** Confirm the mesh is connected and the bundle's
   router endpoint is reachable, then re-run first-boot. Do not bypass the check with the pod's own
   CN: that would let local clients advertise fabric-wide interest.
-- **Local delivery still works, but nothing crosses the fabric after the upstream certificate was
-  renewed.** The rendered `fabric-peer` CN no longer matches the certificate at the endpoint, so
-  default-deny blocks both directions silently. The goat-side operator owns confirmation of the
-  endpoint's current certificate identity. The partner then re-runs first-boot to discover and
-  render it, lets first-boot restart the router, and checks the render/start timestamps above.
+- **First-boot says the fabric router certificate name changed.** Rendering has stopped before it
+  touched the running configuration. The goat-side operator owns confirmation of the new name
+  through the trusted onboarding channel. The partner sets the confirmed value as
+  `ZENOH_FABRIC_CERT_CN` in the active profile and re-runs. Do not copy the newly discovered value
+  from the error into the profile without that confirmation.
+- **A changed render was rejected and the previous configuration is running.** The automatic
+  rollback preserved service, but first-boot still exits non-zero. The partner checks the active
+  profile for a bad value; otherwise the goat-side operator owns investigation of the template or
+  endpoint. Correct the cause and re-run first-boot.
+- **Rollback was refused because an identity changed.** The router is intentionally stopped. The
+  goat-side operator confirms the intended POD and fabric identities; the partner then corrects
+  the bundle or profile and re-runs. Do not copy the last-known-good file over `config.json5`.
 - **mTLS handshake fails on connect.** The cert under `/etc/zenoh/tls/` must be rooted in the
   same CA as the goat side (it is, when it came from your bundle). A stale cert from a previous
   bundle is the usual cause — re-run first-boot to rotate.

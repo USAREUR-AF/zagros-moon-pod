@@ -7,6 +7,7 @@
 //
 // Placeholders (all supplied by first-boot.sh from the profile + the goat-cli-extracted certs):
 //   ${ZENOH_LISTEN_PORT}      local listen port for pod-side clients (goat-cli, audit-sink)
+//   ${POD_ROUTER_ZID}         stable router ID derived from the pod certificate CN
 //   ${ZENOH_FABRIC_ENDPOINT}  the goat-side endpoint the pod dials OUT to (ingress gateway / router).
 //                             SOURCE OF TRUTH = the bundle's goat_cli_extras.router_endpoint
 //                             (first-boot reads it from the bundle-derived profile.toml); the
@@ -20,6 +21,7 @@
 //   ${POD_KEY_PEM}            pod leaf key   (from goat profile init: mtls.key.pem)
 //   ${CA_ROOTS_PEM}           CA roots       (from goat profile init: ca-roots.pem) — from the BUNDLE
 {
+  id: "${POD_ROUTER_ZID}",
   mode: "router",
 
   // Local listen for pod-side clients (goat-cli pub/sub, audit-sink subscribe) over mTLS.

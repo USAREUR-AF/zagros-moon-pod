@@ -208,6 +208,30 @@ else
 fi
 
 POD_CERT_CN="$(certificate_cn "${CTX_DIR}/mtls.cert.pem")" || POD_CERT_CN=""
+POD_ROUTER_ZID="$(derive_pod_router_zid "${POD_CERT_CN}")" || {
+  echo "pod router ID derivation failed: expected 1-32 lowercase hex characters" >&2
+  echo "with no leading zero. Goat-side operator: inspect the pod certificate CN." >&2
+  echo "Partner: leave the router stopped and send this output to the operator." >&2
+  exit 1
+}
+valid_zenoh_zid "${POD_ROUTER_ZID}" || {
+  echo "pod router ID validation failed before rendering." >&2
+  exit 1
+}
+
+ZENOH_STATE_DIR="${POD_STATE_DIR}/zenoh"
+FABRIC_CN_APPLIED_FILE="${ZENOH_STATE_DIR}/.fabric-router-cn.applied"
+RECORDED_FABRIC_CN=""
+if [ -z "${ZENOH_FABRIC_CERT_CN}" ] && [ -e "${FABRIC_CN_APPLIED_FILE}" ]; then
+  if ! RECORDED_FABRIC_CN="$(cat "${FABRIC_CN_APPLIED_FILE}")" || \
+    [ -z "${RECORDED_FABRIC_CN}" ]; then
+    fabric_identity_error 'the applied router certificate record is unreadable.'
+    echo "    Partner: do not replace the record by hand. Ask the goat-side" >&2
+    echo "    operator to confirm the endpoint identity, then set the confirmed" >&2
+    echo "    ZENOH_FABRIC_CERT_CN in the active profile and re-run first-boot." >&2
+    exit 1
+  fi
+fi
 
 # ACLs must distinguish the upstream router from pod-local clients: only the router may send
 # fabric-wide subscription declarations. TLS endpoints are always checked with a CA-verified,
@@ -217,21 +241,68 @@ echo "    discovering fabric router certificate identity"
 resolve_fabric_certificate_cn "${ZENOH_FABRIC_ENDPOINT}" "${ZENOH_FABRIC_CERT_CN}" \
   "${POD_CERT_CN}" "${CTX_DIR}/mtls.cert.pem" "${CTX_DIR}/mtls.key.pem" \
   "${CTX_DIR}/ca-roots.pem" || exit 1
+check_fabric_identity_continuity "${FABRIC_ROUTER_CERT_CN}" \
+  "${ZENOH_FABRIC_CERT_CN}" "${RECORDED_FABRIC_CN}" || exit 1
 echo "    fabric router certificate CN: ${FABRIC_ROUTER_CERT_CN}"
 export ZENOH_LISTEN_PORT ZENOH_FABRIC_ENDPOINT PARTNER_NAMESPACE INBOUND_NAMESPACE
-export POD_CERT_CN FABRIC_ROUTER_CERT_CN
+export POD_CERT_CN POD_ROUTER_ZID FABRIC_ROUTER_CERT_CN
 export POD_CERT_PEM="/etc/zenoh/tls/pod-cert.pem"   # in-container paths (compose mounts ZENOH_TLS_DIR ro)
 export POD_KEY_PEM="/etc/zenoh/tls/pod-key.pem"
 export CA_ROOTS_PEM="/etc/zenoh/tls/ca-roots.pem"
 CONFIG_OUT="${POD_STATE_DIR}/zenoh/config.json5"
+CONFIG_APPLIED_SHA_FILE="${ZENOH_STATE_DIR}/.config.applied.sha256"
+LAST_GOOD_CONFIG="${ZENOH_STATE_DIR}/config.last-known-good.json5"
+LAST_GOOD_IDENTITIES="${ZENOH_STATE_DIR}/.config.last-known-good.identities"
+APPLIED_CONFIG_SHA="$(cat "${CONFIG_APPLIED_SHA_FILE}" 2>/dev/null || true)"
+CONFIG_WAS_APPLIED=0
+
+write_identity_pair() {
+  local path="$1" pod_cn="$2" fabric_cn="$3" temporary
+  temporary="$(mktemp "${path}.tmp.XXXXXX")"
+  chmod 600 "${temporary}"
+  printf '%s\n%s\n' "${pod_cn}" "${fabric_cn}" >"${temporary}"
+  mv "${temporary}" "${path}"
+}
+
+config_subject_cn() {
+  local path="$1" subject="$2"
+  awk -v subject="${subject}" '
+    index($0, "id: \"" subject "\"") { found=1; next }
+    found && /cert_common_names:/ {
+      split($0, fields, "\"")
+      print fields[2]
+      exit
+    }
+    found && /},/ { exit }
+  ' "${path}"
+}
+
+if [ -f "${CONFIG_OUT}" ] && [ -n "${APPLIED_CONFIG_SHA}" ] && \
+  [ "$(sha256sum "${CONFIG_OUT}" | cut -d' ' -f1)" = "${APPLIED_CONFIG_SHA}" ]; then
+  CONFIG_WAS_APPLIED=1
+fi
+
 CONFIG_TMP="$(mktemp "${CONFIG_OUT}.tmp.XXXXXX")"
 cleanup_config_tmp() { [ -z "${CONFIG_TMP:-}" ] || rm -f "${CONFIG_TMP}"; }
 trap cleanup_config_tmp EXIT
 envsubst \
-  '${ZENOH_LISTEN_PORT} ${ZENOH_FABRIC_ENDPOINT} ${PARTNER_NAMESPACE} ${INBOUND_NAMESPACE} ${POD_CERT_CN} ${FABRIC_ROUTER_CERT_CN} ${POD_CERT_PEM} ${POD_KEY_PEM} ${CA_ROOTS_PEM}' \
+  '${ZENOH_LISTEN_PORT} ${POD_ROUTER_ZID} ${ZENOH_FABRIC_ENDPOINT} ${PARTNER_NAMESPACE} ${INBOUND_NAMESPACE} ${POD_CERT_CN} ${FABRIC_ROUTER_CERT_CN} ${POD_CERT_PEM} ${POD_KEY_PEM} ${CA_ROOTS_PEM}' \
   < "${ZENOH_ROUTER_TEMPLATE}" \
   > "${CONFIG_TMP}"
 if [ ! -f "${CONFIG_OUT}" ] || ! cmp -s "${CONFIG_TMP}" "${CONFIG_OUT}"; then
+  if [ "${CONFIG_WAS_APPLIED}" -eq 1 ]; then
+    install -m 600 "${CONFIG_OUT}" "${LAST_GOOD_CONFIG}"
+    LAST_GOOD_POD_CN="$(config_subject_cn "${CONFIG_OUT}" pod-peer)"
+    LAST_GOOD_FABRIC_CN="$(config_subject_cn "${CONFIG_OUT}" fabric-peer)"
+    if safe_certificate_cn "${LAST_GOOD_POD_CN}" && \
+      safe_certificate_cn "${LAST_GOOD_FABRIC_CN}"; then
+      write_identity_pair "${LAST_GOOD_IDENTITIES}" \
+        "${LAST_GOOD_POD_CN}" "${LAST_GOOD_FABRIC_CN}"
+    else
+      rm -f "${LAST_GOOD_IDENTITIES}"
+    fi
+    echo "    saved the last known good router config"
+  fi
   chmod 600 "${CONFIG_TMP}"
   mv "${CONFIG_TMP}" "${CONFIG_OUT}"
   CONFIG_TMP=""
@@ -242,8 +313,6 @@ else
   echo "    router config unchanged: ${CONFIG_OUT}"
 fi
 CONFIG_SHA="$(sha256sum "${CONFIG_OUT}" | cut -d' ' -f1)"
-CONFIG_APPLIED_SHA_FILE="${POD_STATE_DIR}/zenoh/.config.applied.sha256"
-APPLIED_CONFIG_SHA="$(cat "${CONFIG_APPLIED_SHA_FILE}" 2>/dev/null || true)"
 RELOAD_REQUIRED=0
 [ "${CONFIG_SHA}" = "${APPLIED_CONFIG_SHA}" ] || RELOAD_REQUIRED=1
 
@@ -291,33 +360,118 @@ elif [ "${RELOAD_REQUIRED}" -eq 0 ]; then
 fi
 
 ROUTER_HEALTH=""
-router_failure_guidance() {
-  echo "Partner next step: read the router log lines above. If a profile value" >&2
-  echo "caused the bad render, fix the local profile and re-run first-boot." >&2
-  echo "Otherwise, send these log lines to the goat-side operator." >&2
+ROUTER_FAILURE_KIND=""
+
+wait_for_router_health() {
+  local _
+  ROUTER_FAILURE_KIND=""
+  for _ in $(seq 1 60); do
+    ROUTER_STATE="$(docker inspect -f '{{.State.Status}}' \
+      goat-moon-zenoh-router 2>/dev/null || true)"
+    ROUTER_HEALTH="$(docker inspect \
+      -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' \
+      goat-moon-zenoh-router 2>/dev/null || true)"
+    if [ "${ROUTER_STATE}" = "running" ] && [ "${ROUTER_HEALTH}" = "healthy" ]; then
+      return 0
+    fi
+    case "${ROUTER_STATE}" in
+      created|exited|dead|restarting|removing|"")
+        ROUTER_FAILURE_KIND=load
+        return 1
+        ;;
+    esac
+    sleep 2
+  done
+  ROUTER_FAILURE_KIND=health
+  return 1
 }
-for _ in $(seq 1 60); do
-  ROUTER_STATE="$(docker inspect -f '{{.State.Status}}' goat-moon-zenoh-router 2>/dev/null || true)"
-  ROUTER_HEALTH="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' \
-    goat-moon-zenoh-router 2>/dev/null || true)"
-  [ "${ROUTER_STATE}" = "running" ] && [ "${ROUTER_HEALTH}" = "healthy" ] && break
-  case "${ROUTER_STATE}" in
-    created|exited|dead|restarting|removing|"")
-      echo "router failed to load the rendered config (state=${ROUTER_STATE:-missing})." >&2
-      docker logs goat-moon-zenoh-router 2>&1 | tail -n 20 >&2 || true
-      router_failure_guidance
-      exit 1
-      ;;
-  esac
-  sleep 2
-done
-if [ "${ROUTER_STATE}" != "running" ] || [ "${ROUTER_HEALTH}" != "healthy" ]; then
-  echo "router did not become healthy after loading the rendered config." >&2
+
+report_router_failure() {
+  if [ "${ROUTER_FAILURE_KIND}" = load ]; then
+    echo "router failed to load the rendered config (state=${ROUTER_STATE:-missing})." >&2
+  else
+    echo "router did not become healthy after loading the rendered config." >&2
+  fi
   docker logs goat-moon-zenoh-router 2>&1 | tail -n 20 >&2 || true
-  router_failure_guidance
-  exit 1
+}
+
+router_failure_guidance() {
+  echo "Owner: the partner checks profile inputs; the goat-side operator owns" >&2
+  echo "a confirmed scaffold or endpoint failure." >&2
+  echo "Partner next step: fix a bad local profile value and re-run first-boot," >&2
+  echo "or send the router log lines above to the goat-side operator." >&2
+}
+
+record_applied_config() {
+  local sha="$1" temporary
+  temporary="$(mktemp "${CONFIG_APPLIED_SHA_FILE}.tmp.XXXXXX")"
+  chmod 600 "${temporary}"
+  printf '%s\n' "${sha}" >"${temporary}"
+  mv "${temporary}" "${CONFIG_APPLIED_SHA_FILE}"
+}
+
+restore_last_known_good() {
+  local saved_pod_cn saved_fabric_cn restored_sha
+  [ -f "${LAST_GOOD_CONFIG}" ] || return 2
+
+  saved_pod_cn="$(sed -n '1p' "${LAST_GOOD_IDENTITIES}" 2>/dev/null || true)"
+  saved_fabric_cn="$(sed -n '2p' "${LAST_GOOD_IDENTITIES}" 2>/dev/null || true)"
+  if [ "${saved_pod_cn}" != "${POD_CERT_CN}" ] || \
+    [ "${saved_fabric_cn}" != "${FABRIC_ROUTER_CERT_CN}" ]; then
+    echo "The previous configuration was not restored because its POD or" >&2
+    echo "fabric certificate identity differs from the current inputs." >&2
+    if ( cd "${POD_DIR}/compose" && docker compose stop zenoh-router ); then
+      echo "The router is stopped rather than re-admitting an old identity." >&2
+    else
+      echo "First-boot could not stop the router; it is not safe to leave running." >&2
+      echo "Partner next step: run sudo docker stop goat-moon-zenoh-router now." >&2
+    fi
+    echo "Owner: the goat-side operator confirms the intended identities." >&2
+    echo "Partner next step: keep the router stopped, obtain that confirmation," >&2
+    echo "then correct the profile or bundle and re-run first-boot." >&2
+    return 1
+  fi
+
+  install -m 600 "${LAST_GOOD_CONFIG}" "${CONFIG_OUT}"
+  echo "    restoring the last known good router configuration" >&2
+  ( cd "${POD_DIR}/compose" && docker compose restart zenoh-router )
+  if wait_for_router_health; then
+    restored_sha="$(sha256sum "${CONFIG_OUT}" | cut -d' ' -f1)"
+    record_applied_fabric_cn "${FABRIC_CN_APPLIED_FILE}" "${saved_fabric_cn}"
+    record_applied_config "${restored_sha}"
+    echo "The previous configuration is running again." >&2
+    router_failure_guidance
+    return 0
+  fi
+
+  report_router_failure
+  echo "The restored configuration also failed." >&2
+  if ( cd "${POD_DIR}/compose" && docker compose stop zenoh-router ); then
+    echo "The router is stopped." >&2
+  else
+    echo "First-boot could not stop the router; it is not safe to leave running." >&2
+    echo "Partner next step: run sudo docker stop goat-moon-zenoh-router now." >&2
+  fi
+  echo "Owner: the goat-side operator investigates the router and host state." >&2
+  echo "Partner next step: send both sets of router log lines to the operator." >&2
+  return 1
+}
+
+if ! wait_for_router_health; then
+  report_router_failure
+  echo "The new configuration was rejected." >&2
+  if restore_last_known_good; then
+    exit 1
+  else
+    restore_status=$?
+    if [ "${restore_status}" -eq 2 ]; then
+      router_failure_guidance
+    fi
+    exit 1
+  fi
 fi
-printf '%s\n' "${CONFIG_SHA}" > "${CONFIG_APPLIED_SHA_FILE}"
+record_applied_fabric_cn "${FABRIC_CN_APPLIED_FILE}" "${FABRIC_ROUTER_CERT_CN}"
+record_applied_config "${CONFIG_SHA}"
 ( cd "${POD_DIR}/compose" && docker compose up -d )
 echo "    audit sink metrics: curl -s http://127.0.0.1:9303/metrics | grep ^goat_audit_"
 

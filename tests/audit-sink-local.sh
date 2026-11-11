@@ -22,7 +22,7 @@ POD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${POD_DIR}/host/fabric-peer-identity.sh"
 LEAF_EKU="${LEAF_EKU:-serverAuth,clientAuth}"
 PUBLISH_COUNT="${PUBLISH_COUNT:-5}"
-SLOT="7f3c2a10-0000-4000-8000-00000000c1a0"   # synthetic slot anchor
+SLOT="7f3c2a1000004000800000000000c1a0"         # synthetic slot anchor
 PROFILE_NAME="ci-local"                       # profiles/*-local/ is gitignored
 WORK="$(mktemp -d)"
 STATE="${WORK}/state"
@@ -73,14 +73,19 @@ openssl x509 -in "$MINT/leaf.pem" -noout -ext extendedKeyUsage | tail -n 1 | sed
 
 # A synthetic upstream exercises first-boot's real CA-verified CN discovery. It stays up for the
 # pod router to connect to, so this test needs no bypass or pre-trusted CN.
-openssl ecparam -name prime256v1 -genkey -noout -out "$MINT/router.key" 2>/dev/null
-openssl req -new -key "$MINT/router.key" -subj "/CN=synthetic-fabric-router" \
-  -out "$MINT/router.csr" 2>/dev/null
-printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=IP:127.0.0.1\n' \
-  > "$MINT/router.ext"
-openssl x509 -req -in "$MINT/router.csr" -CA "$MINT/ca.pem" -CAkey "$MINT/ca.key" \
-  -CAcreateserial -CAserial "$MINT/ca.srl" -days 2 -sha256 -extfile "$MINT/router.ext" \
-  -out "$MINT/router.pem" 2>/dev/null
+mint_router_leaf() {
+  local name="$1" cn="$2"
+  openssl ecparam -name prime256v1 -genkey -noout -out "$MINT/${name}.key" 2>/dev/null
+  openssl req -new -key "$MINT/${name}.key" -subj "/CN=${cn}" \
+    -out "$MINT/${name}.csr" 2>/dev/null
+  printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=IP:127.0.0.1\n' \
+    > "$MINT/${name}.ext"
+  openssl x509 -req -in "$MINT/${name}.csr" -CA "$MINT/ca.pem" -CAkey "$MINT/ca.key" \
+    -CAcreateserial -CAserial "$MINT/ca.srl" -days 2 -sha256 \
+    -extfile "$MINT/${name}.ext" -out "$MINT/${name}.pem" 2>/dev/null
+}
+mint_router_leaf router synthetic-fabric-router
+mint_router_leaf router-next synthetic-fabric-router-next
 FABRIC_PORT="$(python3 - <<'PY'
 import socket
 with socket.socket() as sock:
@@ -136,7 +141,8 @@ chmod +x "$STUBS"/*
 mkdir -p "${POD_DIR}/profiles/${PROFILE_NAME}"
 sed -e "s|^PARTNER_NAMESPACE=.*|PARTNER_NAMESPACE=${SLOT}|" "${POD_DIR}/profiles/zagros/profile.env" \
   > "${POD_DIR}/profiles/${PROFILE_NAME}/profile.env"
-printf 'POD_STATE_DIR=%s\nPOD_ID=ci-pod\n' "$STATE" >> "${POD_DIR}/profiles/${PROFILE_NAME}/profile.env"
+printf 'POD_STATE_DIR=%s\nPOD_ID=ci-pod\nZENOH_FABRIC_CERT_CN=\n' "$STATE" \
+  >> "${POD_DIR}/profiles/${PROFILE_NAME}/profile.env"
 : > "${WORK}/pod.cbor"   # placeholder bundle; the stub never reads it
 
 INVALID_ROUTER_TEMPLATE="${WORK}/invalid-zenoh-router.json5.tmpl"
@@ -155,7 +161,10 @@ fi
 grep -Eq 'router failed to load|router did not become healthy' \
   "${WORK}/failed-first-run.log" \
   || fail "first-boot did not identify the unhealthy router on the first run"
-grep -Fq 'Partner next step: read the router log lines above.' \
+grep -Fq 'Owner: the partner checks profile inputs' \
+  "${WORK}/failed-first-run.log" \
+  || fail "first-boot gave no owner for the first-run router failure"
+grep -Fq 'Partner next step: fix a bad local profile value' \
   "${WORK}/failed-first-run.log" \
   || fail "first-boot gave no partner next step for the first-run router failure"
 [ ! -e "$STATE/zenoh/.config.applied.sha256" ] \
@@ -167,6 +176,13 @@ sudo grep "^ZENOH_LOCAL_ENDPOINT=" "${POD_DIR}/compose/.env" | sed 's/^/    /'
 rendered_sha="$(sudo sha256sum "$STATE/zenoh/config.json5" | cut -d' ' -f1)"
 applied_sha="$(sudo cat "$STATE/zenoh/.config.applied.sha256")"
 [ "$rendered_sha" = "$applied_sha" ] || fail "first-boot did not record the config loaded by the router"
+[ "$(sudo cat "$STATE/zenoh/.fabric-router-cn.applied")" = synthetic-fabric-router ] \
+  || fail "first-boot did not record the healthy fabric router identity"
+router_zid="$(printf '%s' "${SLOT}|moon-pod-router" | sha256sum | cut -c1-32 | sed 's/^0*//')"
+sudo grep -Fq "id: \"${router_zid}\"" "$STATE/zenoh/config.json5" \
+  || fail "first-boot did not render the deterministic pod router ZID"
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$ROUTER")" = healthy ] \
+  || fail "the router did not start with its deterministic ZID"
 for tls_file in pod-cert.pem pod-key.pem ca-roots.pem; do
   tls_mode="$(sudo stat -c '%u:%g %a' "$STATE/zenoh/tls/$tls_file")"
   [ "$tls_mode" = '0:65532 640' ] \
@@ -192,6 +208,8 @@ grep -Fq 'router config unchanged' "${WORK}/unchanged-rerun.log" \
 grep -Fq 'router already loaded this config — no router restart needed' \
   "${WORK}/unchanged-rerun.log" \
   || fail "unchanged first-boot re-run did not explain why no restart was needed"
+sudo grep -Fq "id: \"${router_zid}\"" "$STATE/zenoh/config.json5" \
+  || fail "the same pod certificate CN rendered a different router ZID"
 
 # --- 4. Assertions -----------------------------------------------------------------------------------
 metric() {  # sum of every sample of a metric family
@@ -221,6 +239,7 @@ import json, sys, time
 import zenoh
 endpoint, tls, key, count = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 conf = zenoh.Config.from_json5(json.dumps({
+    "id": key.split("/", 1)[0],
     "mode": "client",
     "connect": {"endpoints": [endpoint]},
     "scouting": {"multicast": {"enabled": False}},
@@ -266,29 +285,100 @@ config_after="$(sudo sha256sum "$STATE/zenoh/config.json5" | cut -d' ' -f1)"
 [ "$started_before" != "$started_after" ] || fail "the running router was not restarted after its config changed"
 log "router restart applied changed render: ${started_before} -> ${started_after}"
 
-log "refusing to mark a router config applied when its restart fails"
-for recovery_attempt in 1 2 3; do
-  applied_before_failure="$(sudo cat "$STATE/zenoh/.config.applied.sha256")"
-  failed_restart_log="${WORK}/failed-restart-${recovery_attempt}.log"
-  # The invoking user owns WORK; only first-boot itself needs sudo.
-  # shellcheck disable=SC2024
-  if sudo env PATH="${STUBS}:${PATH}" \
-    ZENOH_ROUTER_TEMPLATE="$INVALID_ROUTER_TEMPLATE" \
-    bash "${POD_DIR}/host/first-boot.sh" "${PROFILE_NAME}" "${WORK}/pod.cbor" \
-    >"$failed_restart_log" 2>&1; then
-    fail "first-boot accepted a router that could not load its changed config"
+log "rolling back a rejected render to the last known good configuration"
+good_config_sha="$(sudo sha256sum "$STATE/zenoh/config.json5" | cut -d' ' -f1)"
+failed_restart_log="${WORK}/failed-restart.log"
+# The invoking user owns WORK; only first-boot itself needs sudo.
+# shellcheck disable=SC2024
+if sudo env PATH="${STUBS}:${PATH}" \
+  ZENOH_ROUTER_TEMPLATE="$INVALID_ROUTER_TEMPLATE" \
+  bash "${POD_DIR}/host/first-boot.sh" "${PROFILE_NAME}" "${WORK}/pod.cbor" \
+  >"$failed_restart_log" 2>&1; then
+  fail "first-boot accepted a router that could not load its changed config"
+fi
+grep -Eq 'router failed to load|router did not become healthy' "$failed_restart_log" \
+  || fail "first-boot failed without identifying the unhealthy router"
+grep -Fq 'The new configuration was rejected' "$failed_restart_log" \
+  || fail "first-boot did not report the rejected router configuration"
+grep -Fq 'The previous configuration is running again.' "$failed_restart_log" \
+  || fail "first-boot did not report successful rollback"
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$ROUTER")" = healthy ] \
+  || fail "router was not healthy after automatic rollback"
+restored_sha="$(sudo sha256sum "$STATE/zenoh/config.json5" | cut -d' ' -f1)"
+restored_applied_sha="$(sudo cat "$STATE/zenoh/.config.applied.sha256")"
+[ "$restored_sha" = "$good_config_sha" ] && [ "$restored_applied_sha" = "$restored_sha" ] \
+  || fail "rollback did not restore the running file and its applied hash"
+[ "$(sudo stat -c '%a' "$STATE/zenoh/config.last-known-good.json5")" = 600 ] \
+  || fail "last known good configuration mode is not 600"
+
+log "refusing an unpinned fabric certificate name change before rendering"
+sudo install -m 600 "$MINT/router-next.pem" "$MINT/router.pem"
+sudo install -m 600 "$MINT/router-next.key" "$MINT/router.key"
+docker restart "$UPSTREAM" >/dev/null
+for _ in $(seq 1 30); do
+  if [ "$(discover_fabric_certificate_cn "tls/127.0.0.1:${FABRIC_PORT}" \
+    "$MINT/leaf.pem" "$MINT/leaf.key" "$MINT/ca.pem" 2 2>/dev/null || true)" = \
+    synthetic-fabric-router-next ]; then
+    break
   fi
-  grep -Eq 'router failed to load|router did not become healthy' "$failed_restart_log" \
-    || fail "first-boot failed without identifying the unhealthy router"
-  grep -Fq 'Partner next step: read the router log lines above.' "$failed_restart_log" \
-    || fail "first-boot did not give the partner a next step for the unhealthy router"
-  applied_after_failure="$(sudo cat "$STATE/zenoh/.config.applied.sha256")"
-  [ "$applied_before_failure" = "$applied_after_failure" ] \
-    || fail "first-boot recorded the rejected router config as applied"
-  sudo env PATH="${STUBS}:${PATH}" bash "${POD_DIR}/host/first-boot.sh" \
-    "${PROFILE_NAME}" "${WORK}/pod.cbor" >/dev/null
-  [ "$(docker inspect -f '{{.State.Health.Status}}' "$ROUTER")" = healthy ] \
-    || fail "router did not recover after restoring the valid template"
+  sleep 1
 done
-log "three failed restarts preserved the applied hash and recovered cleanly"
+[ "$(discover_fabric_certificate_cn "tls/127.0.0.1:${FABRIC_PORT}" \
+  "$MINT/leaf.pem" "$MINT/leaf.key" "$MINT/ca.pem" 2 2>/dev/null || true)" = \
+  synthetic-fabric-router-next ] || fail "rotated synthetic router did not become ready"
+continuity_started_before="$(docker inspect -f '{{.State.StartedAt}}' "$ROUTER")"
+continuity_config_before="$(sudo sha256sum "$STATE/zenoh/config.json5" | cut -d' ' -f1)"
+continuity_applied_before="$(sudo cat "$STATE/zenoh/.config.applied.sha256")"
+# shellcheck disable=SC2024
+if sudo env PATH="${STUBS}:${PATH}" \
+  bash "${POD_DIR}/host/first-boot.sh" "${PROFILE_NAME}" "${WORK}/pod.cbor" \
+  >"${WORK}/identity-change-unpinned.log" 2>&1; then
+  fail "first-boot accepted an unpinned fabric certificate name change"
+fi
+grep -Fq 'fabric router certificate name changed' \
+  "${WORK}/identity-change-unpinned.log" \
+  || fail "first-boot did not identify the changed fabric certificate name"
+grep -Fq 'Goat-side operator: confirm the new name' \
+  "${WORK}/identity-change-unpinned.log" \
+  || fail "first-boot did not name the owner of fabric identity confirmation"
+grep -Fq 'set ZENOH_FABRIC_CERT_CN to the' \
+  "${WORK}/identity-change-unpinned.log" \
+  || fail "first-boot did not give the partner a safe next step"
+[ "$(docker inspect -f '{{.State.StartedAt}}' "$ROUTER")" = "$continuity_started_before" ] \
+  || fail "fabric identity refusal restarted the running router"
+[ "$(sudo sha256sum "$STATE/zenoh/config.json5" | cut -d' ' -f1)" = \
+  "$continuity_config_before" ] \
+  || fail "fabric identity refusal changed the rendered config"
+[ "$(sudo cat "$STATE/zenoh/.config.applied.sha256")" = "$continuity_applied_before" ] \
+  || fail "fabric identity refusal changed the applied hash"
+
+log "refusing rollback across a confirmed fabric identity change"
+printf 'ZENOH_FABRIC_CERT_CN=synthetic-fabric-router-next\n' \
+  >> "${POD_DIR}/profiles/${PROFILE_NAME}/profile.env"
+# shellcheck disable=SC2024
+if sudo env PATH="${STUBS}:${PATH}" \
+  ZENOH_ROUTER_TEMPLATE="$INVALID_ROUTER_TEMPLATE" \
+  bash "${POD_DIR}/host/first-boot.sh" "${PROFILE_NAME}" "${WORK}/pod.cbor" \
+  >"${WORK}/identity-change-no-rollback.log" 2>&1; then
+  fail "first-boot accepted the invalid identity-changing render"
+fi
+grep -Fq 'was not restored because its POD or' \
+  "${WORK}/identity-change-no-rollback.log" \
+  || fail "first-boot did not explain why identity-changing rollback was refused"
+grep -Fq 'The router is stopped rather than re-admitting an old identity.' \
+  "${WORK}/identity-change-no-rollback.log" \
+  || fail "first-boot did not report the safe stopped state"
+[ "$(docker inspect -f '{{.State.Status}}' "$ROUTER")" = exited ] \
+  || fail "router was not stopped after identity-changing rollback was refused"
+[ "$(sudo cat "$STATE/zenoh/.config.applied.sha256")" = "$continuity_applied_before" ] \
+  || fail "identity-changing failure replaced the applied hash"
+
+log "recovering with the confirmed identity and valid template"
+sudo env PATH="${STUBS}:${PATH}" bash "${POD_DIR}/host/first-boot.sh" \
+  "${PROFILE_NAME}" "${WORK}/pod.cbor" >/dev/null
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$ROUTER")" = healthy ] \
+  || fail "router did not recover with the confirmed identity"
+[ "$(sudo cat "$STATE/zenoh/.fabric-router-cn.applied")" = \
+  synthetic-fabric-router-next ] \
+  || fail "healthy confirmed identity did not replace the recorded name"
 log "PASS: audit sink subscribed and counted ${PUBLISH_COUNT} samples (endpoint ${ENDPOINT})"

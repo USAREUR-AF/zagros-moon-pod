@@ -11,6 +11,20 @@ safe_certificate_cn() {
   [ -n "$1" ] && case "$1" in *[!A-Za-z0-9._:-]*) return 1;; esac
 }
 
+valid_zenoh_zid() {
+  [ -n "$1" ] && [ "${#1}" -le 32 ] && case "$1" in
+    0*|*[!0-9a-f]*) return 1 ;;
+  esac
+}
+
+derive_pod_router_zid() {
+  local pod_cn="$1" zid
+  zid="$(printf '%s' "${pod_cn}|moon-pod-router" | sha256sum | cut -c1-32)"
+  zid="${zid#"${zid%%[!0]*}"}"
+  valid_zenoh_zid "$zid" || return 1
+  printf '%s\n' "$zid"
+}
+
 fabric_identity_error() {
   printf 'fabric identity check failed: %s\n' "$1" >&2
 }
@@ -18,6 +32,43 @@ fabric_identity_error() {
 fabric_operator_next_step() {
   printf '    Goat-side operator: confirm the endpoint and router certificate.\n' >&2
   printf '    Partner: apply the correction, then re-run first-boot.\n' >&2
+}
+
+check_fabric_identity_continuity() {
+  local discovered_cn="$1" pinned_cn="$2" recorded_cn="$3"
+
+  if [ -z "$pinned_cn" ] && [ -n "$recorded_cn" ] && \
+    ! safe_certificate_cn "$recorded_cn"; then
+    fabric_identity_error 'the recorded router certificate name is invalid.'
+    printf '    Partner: do not replace the record by hand. Ask the goat-side\n' >&2
+    printf '    operator to confirm the endpoint identity, then set the confirmed\n' >&2
+    printf '    ZENOH_FABRIC_CERT_CN in the active profile and re-run first-boot.\n' >&2
+    return 1
+  fi
+  if [ -z "$pinned_cn" ] && [ -n "$recorded_cn" ] && \
+    [ "$discovered_cn" != "$recorded_cn" ]; then
+    fabric_identity_error 'fabric router certificate name changed.'
+    printf '    The endpoint now presents a different name than the applied one.\n' >&2
+    printf '    Goat-side operator: confirm the new name through the trusted\n' >&2
+    printf '    onboarding channel. Partner: set ZENOH_FABRIC_CERT_CN to the\n' >&2
+    printf '    confirmed value in the active profile, then re-run first-boot.\n' >&2
+    return 1
+  fi
+  if [ -z "$pinned_cn" ] && [ -z "$recorded_cn" ]; then
+    printf '    fabric certificate name accepted on first use; set\n'
+    printf '    ZENOH_FABRIC_CERT_CN in the active profile to pin future runs.\n'
+  fi
+}
+
+record_applied_fabric_cn() {
+  local path="$1" cn="$2" temporary
+  safe_certificate_cn "$cn" || return 1
+  temporary="$(mktemp "${path}.tmp.XXXXXX")" || return 1
+  if ! chmod 600 "$temporary" || ! printf '%s\n' "$cn" >"$temporary" || \
+    ! mv "$temporary" "$path"; then
+    rm -f "$temporary"
+    return 1
+  fi
 }
 
 parse_fabric_tls_endpoint() {
