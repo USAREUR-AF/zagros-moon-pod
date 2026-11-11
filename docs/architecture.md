@@ -119,6 +119,10 @@ admitted shape is the receiver's concern.
 
 ## Trust + custody
 
+- Every local Zenoh client presents the POD certificate and private key. The fabric therefore sees
+  one identity for the whole POD, not a separate identity for each local application. Anything
+  holding that key can do everything the POD can do, so grant read access only to services that
+  need it and never copy the key to another host.
 - Fabric-TLS CA trust comes from the **bundle** (`ca_roots`), never compiled in — a partner pod
   may be rooted in a production CA, not the dev sandbox CA. (`--trust-roots` is `goat-clientd`'s
   own flag, not `goat`'s.)

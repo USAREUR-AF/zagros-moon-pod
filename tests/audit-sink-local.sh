@@ -311,6 +311,33 @@ restored_applied_sha="$(sudo cat "$STATE/zenoh/.config.applied.sha256")"
 [ "$(sudo stat -c '%a' "$STATE/zenoh/config.last-known-good.json5")" = 600 ] \
   || fail "last known good configuration mode is not 600"
 
+log "refusing rollback when the saved identities cannot be verified"
+# Keep the running router healthy but make the on-disk applied file impossible to identify.
+# The next changed render therefore saves a last-known-good file without a usable identity record.
+sudo sed -i 's/id: "pod-peer"/id: "unreadable-pod-peer"/' "$STATE/zenoh/config.json5"
+sudo sh -c "sha256sum '$STATE/zenoh/config.json5' | cut -d' ' -f1 > '$STATE/zenoh/.config.applied.sha256'"
+# shellcheck disable=SC2024
+if sudo env PATH="${STUBS}:${PATH}" \
+  ZENOH_ROUTER_TEMPLATE="$INVALID_ROUTER_TEMPLATE" \
+  bash "${POD_DIR}/host/first-boot.sh" "${PROFILE_NAME}" "${WORK}/pod.cbor" \
+  >"${WORK}/unverified-identities-no-rollback.log" 2>&1; then
+  fail "first-boot accepted an invalid render with unverifiable saved identities"
+fi
+grep -Fq 'was not restored because its saved certificate identities could not be verified' \
+  "${WORK}/unverified-identities-no-rollback.log" \
+  || fail "first-boot did not explain that the saved rollback identities were unverifiable"
+grep -Fq 'The router is stopped rather than re-admitting an unverified identity.' \
+  "${WORK}/unverified-identities-no-rollback.log" \
+  || fail "first-boot did not report the safe stopped state for unverifiable identities"
+[ "$(docker inspect -f '{{.State.Status}}' "$ROUTER")" = exited ] \
+  || fail "router was not stopped after rollback identity verification failed"
+
+log "recovering after the unverifiable rollback refusal"
+sudo env PATH="${STUBS}:${PATH}" bash "${POD_DIR}/host/first-boot.sh" \
+  "${PROFILE_NAME}" "${WORK}/pod.cbor" >/dev/null
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$ROUTER")" = healthy ] \
+  || fail "router did not recover after the unverifiable rollback refusal"
+
 log "refusing an unpinned fabric certificate name change before rendering"
 sudo install -m 600 "$MINT/router-next.pem" "$MINT/router.pem"
 sudo install -m 600 "$MINT/router-next.key" "$MINT/router.key"

@@ -347,6 +347,96 @@ with upstream, pod, pod_second, pod_wild, pod_control, other, other_writer:
             "local liveliness token escaped into the fabric-owned inbound namespace"
         )
 
+    # Measure fabric-side liveliness interest separately from data subscriptions. Core fabric
+    # presence uses wildcard liveliness watches and queries; every case below observes the same
+    # pod-local token after an allowed slot-scoped query proves that the token is live.
+    fabric_liveliness_cases = (
+        ("*/**", True, "cross-slot presence expression intersects the pod slot"),
+        ("**", True, "universal presence expression intersects the pod slot"),
+        (f"{slot}/**", True, "slot-scoped control"),
+    )
+    presence_key = f"{slot}/presence/router-forwarding-test"
+    presence_sentinel_key = f"{slot}/presence/router-forwarding-sentinel"
+    fabric_liveliness_seen = {expr: threading.Event() for expr, _expected, _reason in fabric_liveliness_cases}
+    fabric_liveliness_watchers = []
+
+    def record_presence(expr, sample):
+        if str(sample.key_expr) == presence_key and sample.kind == zenoh.SampleKind.PUT:
+            fabric_liveliness_seen[expr].set()
+
+    for expr, _expected, _reason in fabric_liveliness_cases:
+        fabric_liveliness_watchers.append(
+            upstream.liveliness().declare_subscriber(
+                expr, lambda sample, expression=expr: record_presence(expression, sample)
+            )
+        )
+
+    presence_token = pod.liveliness().declare_token(presence_key)
+    presence_sentinel_token = pod.liveliness().declare_token(presence_sentinel_key)
+    presence_deadline = time.monotonic() + 8
+    presence_control = []
+    while time.monotonic() < presence_deadline:
+        presence_control = list(upstream.liveliness().get(f"{slot}/**", timeout=1))
+        control_keys = {
+            str(reply.ok.key_expr) for reply in presence_control if reply.ok is not None
+        }
+        if {presence_key, presence_sentinel_key}.issubset(control_keys):
+            break
+    else:
+        raise AssertionError("slot-scoped liveliness readiness query did not see both tokens")
+
+    fabric_liveliness_results = []
+    for expr, expected, reason in fabric_liveliness_cases:
+        subscriber_saw_token = fabric_liveliness_seen[expr].wait(1)
+        replies = list(upstream.liveliness().get(expr, timeout=2))
+        if any(reply.err is not None for reply in replies):
+            raise AssertionError(f"fabric liveliness query failed on {expr}")
+        query_saw_token = any(
+            reply.ok is not None and str(reply.ok.key_expr) == presence_key
+            for reply in replies
+        )
+        fabric_liveliness_results.append(
+            (expr, subscriber_saw_token, query_saw_token, reason)
+        )
+        if subscriber_saw_token != expected or query_saw_token != expected:
+            raise AssertionError(
+                f"fabric liveliness {expr}: subscriber={subscriber_saw_token} "
+                f"query={query_saw_token}, expected both {expected} ({reason})"
+            )
+
+    # The broad grant, if present, belongs only to the authenticated fabric peer. A pod-local
+    # client and a same-CA client with another CN must still get no wildcard liveliness view.
+    denied_liveliness_cases = (
+        ("pod-local", pod_wild),
+        ("other-CN", other),
+    )
+    denied_liveliness_watchers = []
+    denied_liveliness_seen = {}
+    for label, session in denied_liveliness_cases:
+        denied_liveliness_seen[label] = threading.Event()
+        denied_liveliness_watchers.append(
+            session.liveliness().declare_subscriber(
+                "**",
+                lambda sample, identity=label: denied_liveliness_seen[identity].set()
+                if str(sample.key_expr) == presence_key else None,
+            )
+        )
+    for label, session in denied_liveliness_cases:
+        replies = list(session.liveliness().get("**", timeout=2))
+        if any(reply.err is not None for reply in replies):
+            raise AssertionError(f"{label} wildcard liveliness query failed")
+        if any(reply.ok is not None for reply in replies):
+            raise AssertionError(f"{label} wildcard liveliness query returned a token")
+        if denied_liveliness_seen[label].is_set():
+            raise AssertionError(f"{label} wildcard liveliness subscriber received a token")
+
+    print("fabric liveliness matrix:")
+    for expr, subscriber_saw_token, query_saw_token, reason in fabric_liveliness_results:
+        print(
+            f"  {expr}: subscriber={'seen' if subscriber_saw_token else 'denied'}, "
+            f"query={'seen' if query_saw_token else 'denied'} ({reason})"
+        )
+
     wildcard_keys = []
 
     def record_wildcard(sample):
@@ -488,7 +578,9 @@ with upstream, pod, pod_second, pod_wild, pod_control, other, other_writer:
     assert all((allowed_publisher, broad_publisher, other_write_barrier, inbound_sub,
                 inbound_queryable, inbound_liveliness_sub, fabric_token,
                 fabric_liveliness_sub, fabric_liveliness_sentinel_sub, local_token,
-                liveliness_sentinel_token, local_wildcard, control_sub,
+                liveliness_sentinel_token, presence_token, presence_sentinel_token,
+                *fabric_liveliness_watchers, *denied_liveliness_watchers,
+                local_wildcard, control_sub,
                 wildcard_barrier_queryable, outside_barrier_queryable, other_slot_sub,
                 pod_slot_sub, pod_read_barrier))
     if inbound_direction_violations:

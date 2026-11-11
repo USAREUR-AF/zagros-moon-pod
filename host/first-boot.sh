@@ -397,7 +397,7 @@ report_router_failure() {
 
 router_failure_guidance() {
   echo "Owner: the partner checks profile inputs; the goat-side operator owns" >&2
-  echo "a confirmed scaffold or endpoint failure." >&2
+  echo "a confirmed problem with the router template or the fabric endpoint." >&2
   echo "Partner next step: fix a bad local profile value and re-run first-boot," >&2
   echo "or send the router log lines above to the goat-side operator." >&2
 }
@@ -416,6 +416,22 @@ restore_last_known_good() {
 
   saved_pod_cn="$(sed -n '1p' "${LAST_GOOD_IDENTITIES}" 2>/dev/null || true)"
   saved_fabric_cn="$(sed -n '2p' "${LAST_GOOD_IDENTITIES}" 2>/dev/null || true)"
+  if [ ! -r "${LAST_GOOD_IDENTITIES}" ] || \
+    ! safe_certificate_cn "${saved_pod_cn}" || \
+    ! safe_certificate_cn "${saved_fabric_cn}"; then
+    echo "The previous configuration was not restored because its saved" >&2
+    echo "certificate identities could not be verified." >&2
+    if ( cd "${POD_DIR}/compose" && docker compose stop zenoh-router ); then
+      echo "The router is stopped rather than re-admitting an unverified identity." >&2
+    else
+      echo "First-boot could not stop the router; it is not safe to leave running." >&2
+      echo "Partner next step: run sudo docker stop goat-moon-zenoh-router now." >&2
+    fi
+    echo "Owner: the goat-side operator confirms the intended identities." >&2
+    echo "Partner next step: keep the router stopped, obtain that confirmation," >&2
+    echo "then correct the profile or bundle and re-run first-boot." >&2
+    return 1
+  fi
   if [ "${saved_pod_cn}" != "${POD_CERT_CN}" ] || \
     [ "${saved_fabric_cn}" != "${FABRIC_ROUTER_CERT_CN}" ]; then
     echo "The previous configuration was not restored because its POD or" >&2

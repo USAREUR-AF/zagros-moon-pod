@@ -229,9 +229,17 @@ receives data through the router nor propagates broad interest upstream. Only th
 `fabric-peer` may declare it. A narrower expression would not cover all
 authorized fabric consumers: `*/**` is the current audit/catalog shape and future permitted
 cross-slot expressions must also be representable. Widening the declaration key changes routing
-interest only; `put`, `delete`, `query`, `reply`, queryable, and liveliness permissions remain
-limited to `${PARTNER_NAMESPACE}/**` and `${INBOUND_NAMESPACE}/**`. The goat-side receiver remains
-the load-bearing authorization boundary.
+interest only; `put`, `delete`, `query`, `reply`, and queryable permissions remain limited to
+`${PARTNER_NAMESPACE}/**` and `${INBOUND_NAMESPACE}/**`. Fabric liveliness subscribers and
+liveliness queries on `*/**` and `**` already see a POD-local token because those expressions
+intersect the fabric peer's existing `${PARTNER_NAMESPACE}/**` liveliness grant; no broad rule is
+needed. A slot-scoped expression sees the same token, while a POD-local client or a same-CA client
+with another CN gets no `**` liveliness view. Plain `query` on `**` remains denied.
+
+Every local client presents the POD certificate and private key. The fabric therefore sees one
+identity for the whole POD, and anything holding that key can do everything the POD can do. Keep
+the key readable only by local services that need it, and never copy it to another host. The
+goat-side receiver remains the load-bearing authorization boundary.
 
 The inbound namespace is directional when it differs from the partner namespace: a local client
 can subscribe or query there and receive fabric data, but cannot publish there. This prevents the
@@ -366,10 +374,14 @@ If a changed render fails and the saved POD and fabric certificate names still m
 inputs, first-boot restores the last-known-good file, restarts once, waits through the same bounded
 health check, and exits non-zero while reporting that the previous configuration is running. The
 applied hash always names that restored running file. Correct the input or template and re-run.
+Rollback starts only when the router exits or fails its local port health probe; a configuration
+that loads with a wrong access rule counts as healthy and is not rolled back, so use the
+running-router delivery check in the partner run guide to catch that case.
 If the saved identities differ, first-boot does not restore: doing so could re-admit a certificate
 the operator just replaced. It leaves the router stopped and asks the goat-side operator to confirm
-the identities. A first installation has no prior file to restore and therefore keeps the failed
-state and diagnostics.
+the identities. It also refuses restoration when the saved identities are missing or cannot be
+verified. A first installation has no prior file to restore and therefore keeps the failed state
+and diagnostics.
 
 ## Validate + troubleshoot
 
@@ -394,8 +406,8 @@ state and diagnostics.
   from the error into the profile without that confirmation.
 - **A changed render was rejected and the previous configuration is running.** The automatic
   rollback preserved service, but first-boot still exits non-zero. The partner checks the active
-  profile for a bad value; otherwise the goat-side operator owns investigation of the template or
-  endpoint. Correct the cause and re-run first-boot.
+  profile for a bad value; otherwise the goat-side operator owns a confirmed problem with the
+  router template or the fabric endpoint. Correct the cause and re-run first-boot.
 - **Rollback was refused because an identity changed.** The router is intentionally stopped. The
   goat-side operator confirms the intended POD and fabric identities; the partner then corrects
   the bundle or profile and re-runs. Do not copy the last-known-good file over `config.json5`.

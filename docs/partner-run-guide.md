@@ -139,6 +139,10 @@ Fix the named profile or template problem and re-run. It never rolls back across
 identity change; in that case it leaves the router stopped until the goat-side operator confirms
 the intended identities.
 
+Rollback starts only when the router exits or fails its local port health probe. A configuration
+that loads with a wrong access rule counts as healthy and is not rolled back; the running-router
+delivery check below is what catches that case.
+
 The router now accepts local sessions only when their certificate CN matches the POD certificate.
 A different certificate signed by the same CA may complete TLS, but its operations are silently
 denied; applications must use the certificate and key extracted from this POD's bundle.
@@ -321,8 +325,11 @@ today — declare anyway; the contract requires it and production enforces it.
   re-runs. Do not accept the discovered value without confirmation.
 - **first-boot says the new configuration was rejected and the previous one is running:** rollback
   preserved the data plane, but the run failed. Check the active profile for a bad value; if it is
-  correct, send the displayed router logs to the goat-side operator. Re-run after correcting the
-  cause.
+  correct, the goat-side operator owns a confirmed problem with the router template or the fabric
+  endpoint. Send the displayed router logs and re-run after correcting the cause.
+- **first-boot says the saved certificate identities could not be verified:** the stopped router is
+  the safe state. The goat-side operator confirms the intended POD and fabric identities; the
+  partner corrects the bundle or profile and re-runs. Do not restore the saved file by hand.
 - **first-boot says rollback was refused because an identity differs:** the stopped router is the
   safe state. The goat-side operator confirms the intended POD and fabric identities; the partner
   corrects the bundle or profile and re-runs. Do not restore the saved file by hand.
