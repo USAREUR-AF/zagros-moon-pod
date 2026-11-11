@@ -412,22 +412,35 @@ with upstream, pod, pod_second, pod_wild, pod_control, other, other_writer:
     )
     denied_liveliness_watchers = []
     denied_liveliness_seen = {}
+    denied_liveliness_probe_key = f"{slot}/presence/denied-wildcard-probe"
     for label, session in denied_liveliness_cases:
         denied_liveliness_seen[label] = threading.Event()
         denied_liveliness_watchers.append(
             session.liveliness().declare_subscriber(
                 "**",
                 lambda sample, identity=label: denied_liveliness_seen[identity].set()
-                if str(sample.key_expr) == presence_key else None,
+                if str(sample.key_expr) == denied_liveliness_probe_key else None,
             )
         )
+    denied_liveliness_probe = pod.liveliness().declare_token(denied_liveliness_probe_key)
+    denied_probe_deadline = time.monotonic() + 8
+    while time.monotonic() < denied_probe_deadline:
+        replies = list(upstream.liveliness().get(f"{slot}/**", timeout=1))
+        if any(
+            reply.ok is not None
+            and str(reply.ok.key_expr) == denied_liveliness_probe_key
+            for reply in replies
+        ):
+            break
+    else:
+        raise AssertionError("fabric readiness query did not see denied liveliness probe")
     for label, session in denied_liveliness_cases:
         replies = list(session.liveliness().get("**", timeout=2))
         if any(reply.err is not None for reply in replies):
             raise AssertionError(f"{label} wildcard liveliness query failed")
         if any(reply.ok is not None for reply in replies):
             raise AssertionError(f"{label} wildcard liveliness query returned a token")
-        if denied_liveliness_seen[label].is_set():
+        if denied_liveliness_seen[label].wait(1):
             raise AssertionError(f"{label} wildcard liveliness subscriber received a token")
 
     print("fabric liveliness matrix:")
@@ -579,6 +592,7 @@ with upstream, pod, pod_second, pod_wild, pod_control, other, other_writer:
                 inbound_queryable, inbound_liveliness_sub, fabric_token,
                 fabric_liveliness_sub, fabric_liveliness_sentinel_sub, local_token,
                 liveliness_sentinel_token, presence_token, presence_sentinel_token,
+                denied_liveliness_probe,
                 *fabric_liveliness_watchers, *denied_liveliness_watchers,
                 local_wildcard, control_sub,
                 wildcard_barrier_queryable, outside_barrier_queryable, other_slot_sub,
