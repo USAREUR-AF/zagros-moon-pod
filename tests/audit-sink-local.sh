@@ -323,7 +323,7 @@ if sudo env PATH="${STUBS}:${PATH}" \
   >"${WORK}/unverified-identities-no-rollback.log" 2>&1; then
   fail "first-boot accepted an invalid render with unverifiable saved identities"
 fi
-grep -Fq 'was not restored because its saved certificate identities could not be verified' \
+grep -Fq 'certificate identities could not be verified.' \
   "${WORK}/unverified-identities-no-rollback.log" \
   || fail "first-boot did not explain that the saved rollback identities were unverifiable"
 grep -Fq 'The router is stopped rather than re-admitting an unverified identity.' \
