@@ -231,10 +231,12 @@ authorized fabric consumers: `*/**` is the current audit/catalog shape and futur
 cross-slot expressions must also be representable. Widening the declaration key changes routing
 interest only; `put`, `delete`, `query`, `reply`, and queryable permissions remain limited to
 `${PARTNER_NAMESPACE}/**` and `${INBOUND_NAMESPACE}/**`. Fabric liveliness subscribers and
-liveliness queries on `*/**` and `**` already see a POD-local token because those expressions
-intersect the fabric peer's existing `${PARTNER_NAMESPACE}/**` liveliness grant; no broad rule is
-needed. A slot-scoped expression sees the same token, while a POD-local client or a same-CA client
-with another CN gets no `**` liveliness view. Plain `query` on `**` remains denied.
+queries on `*/**` and `**` see a POD-local token after the POD router exports that token to the
+upstream router under the fabric peer's slot-scoped `liveliness_token` egress grant. The upstream
+router then matches the exported token against its own wildcard watchers and queries. The POD
+router still denies a fabric-CN client's direct `**` liveliness subscriber and query, just as it
+denies POD-local and same-CA/different-CN clients. No broad liveliness rule is needed, and plain
+`query` on `**` remains denied.
 
 Every local client presents the POD certificate and private key. The fabric therefore sees one
 identity for the whole POD, and anything holding that key can do everything the POD can do. Keep

@@ -347,13 +347,13 @@ with upstream, pod, pod_second, pod_wild, pod_control, other, other_writer:
             "local liveliness token escaped into the fabric-owned inbound namespace"
         )
 
-    # Measure fabric-side liveliness interest separately from data subscriptions. Core fabric
-    # presence uses wildcard liveliness watches and queries; every case below observes the same
-    # pod-local token after an allowed slot-scoped query proves that the token is live.
+    # These watchers attach to the upstream router, not the pod router. The pod exports its token
+    # under the fabric peer's slot-scoped egress grant; the upstream router then matches that token
+    # against its own wildcard liveliness watches and queries.
     fabric_liveliness_cases = (
-        ("*/**", True, "cross-slot presence expression intersects the pod slot"),
-        ("**", True, "universal presence expression intersects the pod slot"),
-        (f"{slot}/**", True, "slot-scoped control"),
+        ("*/**", True, "upstream cross-slot watch matches the exported slot token"),
+        ("**", True, "upstream universal watch matches the exported slot token"),
+        (f"{slot}/**", True, "upstream slot-scoped control"),
     )
     presence_key = f"{slot}/presence/router-forwarding-test"
     presence_sentinel_key = f"{slot}/presence/router-forwarding-sentinel"
