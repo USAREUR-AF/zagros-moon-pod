@@ -22,6 +22,7 @@ The run guide assumes all of this. Each row has a check that must pass:
 | 64-bit Linux host you control | `uname -m` prints `aarch64` or `x86_64` |
 | Docker Engine + compose plugin | `docker compose version` prints a version |
 | `envsubst` | `envsubst --version` prints a version |
+| OpenSSL | `openssl version` prints a version |
 | `goat` binary on `PATH` | `goat --version` prints a version |
 | Your goatnet's CA root file on the host | `ls <ca-id>.pem`, or `<prefix>-goat-cli-ca.pem` inside your bundle tarball (else fetch after the mesh join, like the goat binary) |
 | Mesh client installed | `netbird version` prints a version (zagros sandbox path) |
@@ -52,10 +53,10 @@ The repo's scripts and docs invoke compose as `docker compose` (the plugin). The
 standalone `docker-compose` binary also works if you already have it, but nothing here requires
 it.
 
-### envsubst
+### envsubst + OpenSSL
 
 ```sh
-sudo apt-get install -y gettext-base     # provides envsubst
+sudo apt-get install -y gettext-base openssl
 ```
 
 ### Mesh client (zagros sandbox path)

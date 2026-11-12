@@ -3,16 +3,24 @@
 **Principle:** the pod hardcodes **nothing** stack-specific. Everything environment-specific comes
 from the **signed join bundle** (the source of truth) + the active **profile**
 (`profiles/<env>/`, a fallback for fields a bundle omits). The zagros profile is concrete (it's the
-live sandbox); the production profile is a documented TODO seam — production specifics that aren't
-settled are **not invented** here.
+live sandbox); the production profile is a documented TODO seam for comparing environment values,
+not an operational cross-sovereign deployment path. A moon pod is a learning tool for an exercise
+environment. In operations, each sovereign runs its own environment and PODs, and data crosses
+between sovereigns only by deliberate release through federated boundary nodes
+([ADR 1092](https://github.com/USAREUR-AF/goatcore/blob/cbf2cb7f5147c5b7879f4d12420845b2e4d3a067/docs/adr/1092-moon-pod-peer-classes.md),
+[ADR 0223](https://github.com/USAREUR-AF/goatcore/blob/cbf2cb7f5147c5b7879f4d12420845b2e4d3a067/docs/adr/0223-goat-moon-pod-repo-containment.md),
+[ADR 1157](https://github.com/USAREUR-AF/goatcore/blob/cbf2cb7f5147c5b7879f4d12420845b2e4d3a067/docs/adr/1157-cross-sovereign-federation-edge-terminated.md),
+[ADR 1208](https://github.com/USAREUR-AF/goatcore/blob/cbf2cb7f5147c5b7879f4d12420845b2e4d3a067/docs/adr/1208-sovereign-environments-release-namespaces-and-grant-encryption.md)).
 
-This is the central anti-over-specification guarantee: switching from zagros to production (or to
-any other goatnet) is a different bundle + profile, never a code change to the pod.
+This is the central anti-over-specification guarantee: moving the same exercise POD between
+environments changes its bundle and profile, not its code. The production column below records
+which values would differ inside one sovereign environment; it does not turn the POD into a route
+between sovereigns.
 
-| Axis | zagros (sandbox) | Production goat-net | How the pod stays agnostic |
+| Axis | zagros (sandbox) | One sovereign production environment (planning comparison) | How the pod stays agnostic |
 |---|---|---|---|
 | Zenoh topology | single router; peers dial it | per-site planes / multi-router + federation — **not fully settled** | router connect/listen endpoints come from the bundle (`router_endpoint`); pod does not assume a single router |
-| Zenoh ACL subject identity | `cert_common_names` (CN-keyed) | likely URI-SAN or other — **TBD** | the axis is baked into the router ACL template today (CN-keyed); a production axis change is a template change (reserved in the production profile TODO) |
+| Zenoh ACL subject identity | `cert_common_names` (CN-keyed); no default endpoint-name pin | likely URI-SAN or other — **TBD** | first-boot extracts the pod CN, verifies the connected fabric-router CN, and requires continuity with the last healthy run; a production axis change is a template change (reserved in the production profile TODO) |
 | Zenoh key-expr namespace | per-uuid **slot** (`<slot_id>/**`); flat community-read | `release/<partner>/**` (egress) + `release/goat/**` (ingress) | the write namespace is `PARTNER_NAMESPACE` and the bilateral inbound is `INBOUND_NAMESPACE` — both profile-driven, neither hardcoded |
 | Netbird / mesh mgmt | zagros sandbox mgmt + sandbox group taxonomy | **partner-net** (separate mgmt instance) + production group taxonomy | mgmt URL + setup key ride in the bundle (`InnerMeshSetup`); profile carries nothing site-internal |
 | PKI roots | shared dev sandbox CA | per-site production CA | fabric-TLS trust is the bundle's `ca_roots`; the root that verifies the bundle itself is added per goatnet with `goat ca add`. Neither is compiled in |
@@ -40,9 +48,35 @@ the operator adds that root once per goatnet (`goat ca add`, into the pod's prof
 [`partner-run-guide.md`](partner-run-guide.md#trust-your-goatnets-ca-root). It stays
 stack-agnostic the same way: a production CA is another root file, not another build.
 
+For a TLS router endpoint, first-boot derives the upstream router CN from a live, CA-verified mTLS
+handshake. The public core-router policy declares one name at
+[`cbf2cb7f`](https://github.com/USAREUR-AF/goatcore/blob/cbf2cb7f5147c5b7879f4d12420845b2e4d3a067/ops/ansible/roles/goat-zenoh/templates/config.json5.j2#L1624-L1634).
+That does not prove every endpoint role a POD bundle may name shares the core-router identity, so
+the zagros profile does not ship a default pin. It accepts a CA-verified name on first use, records
+it only after router health, and refuses an unconfirmed later change. Any configured
+`ZENOH_FABRIC_CERT_CN` must match TLS discovery. A
+non-TLS endpoint must provide that value from the goat-side operator through the trusted
+onboarding channel. The ACL never widens fabric subscription interest to every trusted peer.
+
+The current ACL supports one router CN per rendered pod config. An endpoint pool whose routers
+present different CNs is not supported: whichever CN was discovered would cause default-deny to
+silently block every other router. A production multi-router design must give the pool one shared
+authenticated identity or extend the profile/template to bind every approved router identity.
+
+The current POD also gives every local application the POD's certificate and private key, so the
+fabric sees one identity for the entire POD. Per-system identities behind a POD require per-client
+grants in the router template and a goat-side issuance path; that path is proposed, not built
+([design](https://github.com/USAREUR-AF/goatcore/blob/cbf2cb7f5147c5b7879f4d12420845b2e4d3a067/docs/design/pod-targeted-client-bundles.md)).
+
 The only values that legitimately live in the profile are the ones the bundle does *not* carry:
 the bilateral inbound prefix (`INBOUND_NAMESPACE`), audit retention, the mesh mode, and the
-ACL subject axis — and even those are plain config, swappable per environment.
+ACL subject axis (plus `ZENOH_FABRIC_CERT_CN` when non-TLS requires it or TLS is pinned) — and even
+those are plain config, swappable per environment.
+
+The router's own Zenoh ID is not an environment input. It is deterministically derived from the
+POD certificate CN with a `moon-pod-router` suffix, so restarts preserve topology identity without
+colliding with a slot-pinned publisher session. A failed changed render rolls back only when the
+saved POD and fabric certificate identities still match; identity changes fail stopped instead.
 
 ## Goat-side dependencies the pod is built to plug into (not pod code)
 

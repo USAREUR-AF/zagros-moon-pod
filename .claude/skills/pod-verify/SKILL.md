@@ -23,19 +23,14 @@ target. Check WHERE the data was published against the slot before touching any 
 | 1. Mesh | `netbird status` | Connected |
 | 2. Health | `sudo GOAT_PROFILE_DIR=/var/lib/goat-moon/goat-cli goat doctor --all` | cert + router checks green |
 | 3. Containers | `sudo docker ps` | `goat-moon-zenoh-router` Up (`goat-moon-audit-sink` only with the opt-in `audit` profile) |
-| 4. Round-trip | `sudo docker stop goat-moon-zenoh-router`, then `sudo GOAT_PROFILE_DIR=/var/lib/goat-moon/goat-cli goat pub '<slot>/test/ping' --payload-file /tmp/ping` and `sudo GOAT_PROFILE_DIR=/var/lib/goat-moon/goat-cli goat flow '<slot>/test/ping' --since 5m`, then `sudo docker start goat-moon-zenoh-router` | flow's audit row: `ok — 1 event(s)` |
+| 4. Real data path | Keep the router running. Note the slot's portal-catalog `publish_count`, publish one uniquely named message through `tls/127.0.0.1:7447` with the partner's normal application or a client under `clients/`, check `goat_audit_samples_total`, then refresh the catalog for up to three minutes | both the local audit count and slot catalog count rise |
 | 5. Doctor timer | `cat /var/lib/goat-moon/doctor/status.json`; check its timestamp advances across 60s | fresh status, no `status.json.last-fail` |
 
-Step 4 stops the router on purpose: the fabric allows exactly one transport per pod identity
-(the slot cert pins the session ZID), and the running router holds that transport. A pub/sub
-under the same identity while the router is connected is refused with `MAX_LINKS` — and an
-occasional success with the router up is the same collision won by luck during a router
-reconnect, so it proves nothing. The confirmation reads the audit tail (`goat flow --since`)
-rather than a live `goat sub`: the fabric does not replay past events to a subscriber, so a
-sub started after the pub exits prints nothing — and a concurrent sub under the pod identity
-is the same MAX_LINKS collision. Restarting the router after step 4 is part of the step —
-and if any command in step 4 wedges or errors, run `sudo docker start goat-moon-zenoh-router`
-FIRST, then debug; never leave the pod router stopped while investigating.
+Step 4 must exercise the local router. Stopping it and running `goat pub` directly against the
+fabric bypasses the router ACL and cannot prove the partner data path. A local audit rise alone
+proves only local delivery; without a catalog rise, fabric delivery is not confirmed. Leave the
+router running and retain the test key and timestamp when handing an ambiguous result to the
+goat-side operator.
 
 A pod is "up" when all five pass. Report which step failed and what it printed; never
 summarize a failure as "network issues".
@@ -44,7 +39,11 @@ summarize a failure as "network issues".
 
 | Symptom | Go to |
 |---|---|
-| `zenoh open failed … reason MAX_LINKS` | your own pod router holds the identity's single fabric transport — rerun step 4 with the router stopped; if the router is already stopped, an earlier goat session is still reaping (~seconds) |
+| `zenoh open failed … reason MAX_LINKS` | a host-side `goat pub` or `goat sub` is competing with the running router for the pod identity; use the local-router client path in step 4 instead |
+| Local audit count rises but catalog count does not | local delivery worked but fabric delivery is not confirmed; retain the key and timestamp and report it to the goat-side operator |
+| `fabric router certificate name changed` | first-boot stopped before rendering. The goat-side operator confirms the new name through the trusted onboarding channel; the partner sets the confirmed `ZENOH_FABRIC_CERT_CN`, re-runs, and verifies the restart |
+| New router config was rejected; previous config is running | service was rolled back but the run failed. Check profile inputs, retain the displayed logs, correct the cause, and re-run |
+| Rollback refused after an identity change | leave the router stopped. The goat-side operator confirms the intended POD and fabric identities; correct the bundle or profile and re-run. Never restore the saved file by hand |
 | Publish vanishes / sub receives nothing inside the slot | [docs/router-config.md](../../../docs/router-config.md), ACL troubleshooting ladder |
 | Doctor router check fails | run-guide Trouble: mesh up? bundle expired? (`goat profile show`) |
 | Image pull failure | `tests/check-images-public.sh` from the repo root; egress problem if it fails |

@@ -42,7 +42,7 @@ secrets:
 
 > **On the pod host**, first-boot writes these under `/var/lib/goat-moon/goat-cli/contexts/<ctx>/`
 > (`mtls.cert.pem`, `mtls.key.pem`, `ca-roots.pem`) — root-owned, so point at them with sudo or
-> copy them out for your user. **On your own workstation** (you ran `goat profile init` yourself
+> grant read access only to the local services that need them. **On your own workstation** (you ran `goat profile init` yourself
 > with an operator-handed bundle), they land at `~/.goat/contexts/default/`. **If the pod is on
 > your machine, `GOAT_ROUTER` is `tls/127.0.0.1:7447`.** If you connect to a remote pod/router
 > over the mesh, it's that host's mesh IP.
@@ -56,6 +56,13 @@ export GOAT_KEY="/var/lib/goat-moon/goat-cli/contexts/default/mtls.key.pem"
 export GOAT_CA="/var/lib/goat-moon/goat-cli/contexts/default/ca-roots.pem"
 export GOAT_NAMESPACE="<your-slot-on-zagros>"   # release/acme is the production shape
 ```
+
+Use the certificate and key extracted from this POD's own enrollment bundle. The router ACL now
+matches that certificate's CN; another certificate signed by the same CA can complete TLS but its
+publishes and subscriptions are silently denied. Every local application therefore presents the
+same POD identity, and the fabric sees one identity for the whole POD. Anything that can read the
+private key can do everything the POD can do: keep it readable only by services that need it, and
+never copy it to another host.
 
 ## The one connection gotcha (read this — it bites everyone)
 

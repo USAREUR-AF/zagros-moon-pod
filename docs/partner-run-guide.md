@@ -46,6 +46,7 @@ blank machine (Raspberry Pi 5 worked example included) to every box below checke
 - A **mesh client**: stock NetBird is the zagros on-ramp (`netbird up` with the bundle's setup-key);
   the production path uses `goat-clientd` and first-boot drives it for you.
 - The **`goat`** binary on `PATH`, and `envsubst` (from `gettext`).
+- **OpenSSL**, used by first-boot to verify and identify the fabric router before rendering its ACL.
 - Your goatnet's **CA root** (a public-key `.pem` — usually already in your bundle tarball) and
   a fingerprint, from the goat side, to check it against.
   `goat` ships with no goatnet built in and cannot verify your bundle without it — see
@@ -88,10 +89,84 @@ sudo ./host/first-boot.sh zagros-local /path/to/<your-handle>.cbor
 ```
 
 first-boot prints six numbered steps, in order: [1/6] verify the bundle + extract certs
-(`goat profile init`) → [2/6] lay the Zenoh mTLS material → [3/6] render the router config
-(router endpoint **from the bundle**) → [4/6] import the bundle into `goat-clientd` — on the
-zagros sandbox this step prints **skipped**, which is normal (stock NetBird is the sandbox mesh
-client) → [5/6] start `zenoh-router` and `audit-sink` via compose → [6/6] install the `goat-doctor` health timer.
+(`goat profile init`) → [2/6] lay the Zenoh mTLS material → [3/6] import the bundle into
+`goat-clientd` — on the zagros sandbox this step prints **skipped**, which is normal (stock
+NetBird is the sandbox mesh client) → [4/6] verify the fabric peer and render the router config
+(router endpoint **from the bundle**) → [5/6] start `zenoh-router` and `audit-sink` via compose →
+[6/6] install the `goat-doctor` health timer.
+
+During [4/6], first-boot makes a CA-verified mTLS connection to the bundle's router endpoint and
+prints the fabric router certificate CN it bound into the ACL. If that identity cannot be
+verified, rendering stops; check the mesh and endpoint rather than copying an unverified CN into
+the profile. The zagros profile does not assume every endpoint role shares one certificate name.
+Without an onboarding pin, it accepts the verified name on first use and records it only after
+router health.
+
+## Upgrade an existing pod for fabric forwarding
+
+PODs installed before this router-ACL fix must re-render; restarting an old rendered config is
+not enough. Keep the same local profile and bundle, update this repository, then run the same
+first-boot command used originally:
+
+```bash
+git pull --ff-only
+sudo ./host/first-boot.sh zagros-local /path/to/<your-handle>.cbor
+sudo docker ps --filter name=goat-moon-zenoh-router
+```
+
+An unchanged bundle is not consumed again: first-boot reports `profile present and bundle
+unchanged`. It replaces `config.json5` only when the rendered content changes and then restarts an
+already-running router so zenohd loads the new ACL. It waits up to about two minutes for the router
+to become healthy and records the render and fabric identity as applied only after that succeeds.
+The upgrade also adds a deterministic router `id`, so the first run restarts once even when the
+ACL inputs did not change; later unchanged runs do not restart. Confirm the file
+contains the `fabric-interest` rule and distinct `pod-peer` and `fabric-peer` subjects; never edit
+it by hand. Print both timestamps in UTC so they can be compared directly:
+
+```bash
+sudo date -u -r /var/lib/goat-moon/zenoh/config.json5 '+rendered %Y-%m-%dT%H:%M:%SZ'
+sudo date -u -d "$(sudo docker inspect -f '{{.State.StartedAt}}' goat-moon-zenoh-router)" '+router started %Y-%m-%dT%H:%M:%SZ'
+```
+
+When the render changes, the router start time is later. When nothing changed, first-boot prints
+`router config unchanged` and does not restart the router; the older render time is also the
+expected passing state.
+
+Before replacing an applied configuration, first-boot saves one mode-`0600` last-known-good copy.
+If the new render is rejected and the POD and fabric certificate names are unchanged, it restores
+that copy, restarts once, reports that the previous configuration is running, and exits non-zero.
+Fix the named profile or template problem and re-run. It never rolls back across a certificate
+identity change; in that case it leaves the router stopped until the goat-side operator confirms
+the intended identities.
+
+Rollback starts only when the router exits or fails its local port health probe. A configuration
+that loads with a wrong access rule counts as healthy and is not rolled back; the running-router
+delivery check below is what catches that case.
+
+The router now accepts local sessions only when their certificate CN matches the POD certificate.
+A different certificate signed by the same CA may complete TLS, but its operations are silently
+denied; applications must use the certificate and key extracted from this POD's bundle.
+
+To confirm fabric arrival, note your slot's `publish_count` in the portal catalog, publish one
+uniquely named message through the **running local router** (`tls/127.0.0.1:7447`) using your normal
+application or one of the clients in [`../clients/`](../clients/README.md), then refresh for up to
+three minutes. The slot-level count must rise. Also confirm the local audit metric rises:
+
+```bash
+curl -fsS http://127.0.0.1:9303/metrics | grep '^goat_audit_samples_total'
+```
+
+A local metric rise with no catalog rise is **not confirmed fabric delivery**. Leave the router
+running, retain the key and timestamp, and report the result to the goat-side operator. Do not
+stop the router and publish directly to the fabric: that bypasses the path this check is meant to
+prove.
+
+If the endpoint presents a certificate name different from the last healthy run, first-boot stops
+before rendering. The goat-side operator owns confirmation of the new name through the trusted
+onboarding channel. The partner then sets the confirmed name as `ZENOH_FABRIC_CERT_CN` in the
+active profile, re-runs first-boot, and repeats the timestamp and delivery checks above. Do not
+copy the name from the error without that confirmation. An endpoint pool whose routers present
+different CNs is not supported by this CN-bound ACL.
 
 ### Trust your goatnet's CA root
 
@@ -161,31 +236,21 @@ sudo GOAT_PROFILE_DIR=/var/lib/goat-moon/goat-cli goat doctor --all
 # Containers up:
 sudo docker ps    # goat-moon-zenoh-router (audit-sink only if you opted into the audit profile)
 
-# Round-trip publish on your own namespace (your slot), confirmed by the audit tail.
-# Stop the pod router FIRST: the fabric allows exactly one transport per pod
-# identity, and the running router holds it — a goat session under the same identity
-# is refused (MAX_LINKS) while the router is connected. Restart it after.
-sudo docker stop goat-moon-zenoh-router
-echo hi > /tmp/ping
-sudo GOAT_PROFILE_DIR=/var/lib/goat-moon/goat-cli goat pub '<your-slot>/test/ping' --payload-file /tmp/ping
-sudo GOAT_PROFILE_DIR=/var/lib/goat-moon/goat-cli goat flow '<your-slot>/test/ping' --since 5m
-sudo docker start goat-moon-zenoh-router
-# Pass: the flow report's audit row reads "ok — 1 event(s)" — the fabric-side audit
-# tail saw your publish arrive. Do NOT verify with `goat sub` after the pub: goat sub
-# is a live subscriber and the fabric does not replay past events to it, so a sub
-# started after the pub exits prints nothing (or, worse, prints unrelated live traffic
-# in your slot and "passes" for the wrong reason). The one-transport rule is also why
-# the sub can't simply run first in another terminal: a second concurrent goat session
-# under the pod identity is the same MAX_LINKS collision.
+# Local observation — record the value before and after the running-router delivery check:
+curl -fsS http://127.0.0.1:9303/metrics | grep '^goat_audit_samples_total'
 ```
 
-If any command above wedges or errors, run `sudo docker start goat-moon-zenoh-router`
-FIRST and debug afterwards — never leave the pod with its router stopped.
+For the delivery verdict, use the single running-router procedure in
+[Upgrade an existing pod for fabric forwarding](#upgrade-an-existing-pod-for-fabric-forwarding):
+publish with the normal local application/client path, observe the local metric, and require the
+slot catalog count to rise within three minutes. Never stop the router for this check; a direct
+host-side `goat pub` would compete for the identity or bypass the router rules under test.
 
-A `zenoh open failed … reason MAX_LINKS` on the pub or flow means the router was still holding
-the identity's transport (or an earlier goat session had not reaped yet, ~seconds) — not a
-credential or ACL fault. An intermittently *succeeding* pub with the router up is the same
-collision won by luck during a router reconnect; do not trust it as a verify.
+The current `moon_pod_setup.sh` Part 3 round-trip still stops the router and uses the older direct
+fabric path. That check does not exercise these router rules and is not the delivery verdict above;
+the separate setup-verdict change tracked in
+[USAREUR-AF/zagros-moon-pod#6](https://github.com/USAREUR-AF/zagros-moon-pod/issues/6)
+will replace it. If Part 3 is run in the meantime, it restarts the router before returning.
 
 Your slot is the namespace your cert is bound to (the `PARTNER_NAMESPACE` first-boot reported). A
 publish **outside** your slot is silently denied — that is expected; publish only within it.
@@ -254,6 +319,20 @@ today — declare anyway; the contract requires it and production enforces it.
 - **`goat doctor` router check fails:** confirm the mesh is up (`netbird status` → Connected) and
   that the bundle hasn't expired (`goat profile show`). The router endpoint the pod uses comes
   from the bundle, so a stale bundle points at the wrong place — get a fresh one.
+- **first-boot says `fabric router certificate name changed`:** the running router and applied
+  config were left untouched. The goat-side operator confirms the new name through the trusted
+  onboarding channel; the partner puts that confirmed value in `ZENOH_FABRIC_CERT_CN` and
+  re-runs. Do not accept the discovered value without confirmation.
+- **first-boot says the new configuration was rejected and the previous one is running:** rollback
+  preserved the data plane, but the run failed. Check the active profile for a bad value; if it is
+  correct, the goat-side operator owns a confirmed problem with the router template or the fabric
+  endpoint. Send the displayed router logs and re-run after correcting the cause.
+- **first-boot says the saved certificate identities could not be verified:** the stopped router is
+  the safe state. The goat-side operator confirms the intended POD and fabric identities; the
+  partner corrects the bundle or profile and re-runs. Do not restore the saved file by hand.
+- **first-boot says rollback was refused because an identity differs:** the stopped router is the
+  safe state. The goat-side operator confirms the intended POD and fabric identities; the partner
+  corrects the bundle or profile and re-runs. Do not restore the saved file by hand.
 - **A container can't pull its image:** every pod image is public; run `tests/check-images-public.sh`
   to confirm reachability from your host.
 - **A publish "succeeds" but nothing arrives:** check you published *inside* your slot. Denials
@@ -263,7 +342,7 @@ today — declare anyway; the contract requires it and production enforces it.
   `E_PROFILE_MISSING`, not as a permission error). To pass a variable, put it after `sudo`, as in
   `sudo GOAT_PROFILE_DIR=… goat …`: `sudo` drops variables set in front of it.
 - **Writing your own client/bridge, and worried about the router's one-transport-per-identity
-  rule above?** That rule is about *the pod's own goat-cli sessions* (`goat pub`/`sub`/`flow`)
+  rule?** That rule is about *the pod's own goat-cli sessions* (`goat pub`/`sub`/`flow`)
   dialing the fabric endpoint directly with the same identity the router already holds — it is
   not about clients in general. A client or bridge pointed at the **local** router
   (`GOAT_ROUTER=tls/127.0.0.1:7447`, per [`clients/README.md`](../clients/README.md)) is a

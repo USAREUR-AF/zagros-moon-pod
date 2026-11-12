@@ -10,6 +10,7 @@ profiles/*-local/
 # local build / test
 /target
 *.log
+/.router-forwarding.*/
 
 # python (the examples are runnable)
 __pycache__/
