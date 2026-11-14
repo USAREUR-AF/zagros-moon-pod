@@ -2,9 +2,9 @@
 
 This is a **menu of candidate tracks** for proving out the moon-pod: each is a self-contained
 engineering campaign with a clear thesis to demonstrate. They are *options* — pick one to focus a
-collaboration sprint, or sequence several. zagros is the sandbox where each is proven; the value of
-each track is the arc it carries from **a partner exchanging data in a sandbox** to **a
-real production system** running on the same shape.
+collaboration sprint, or sequence several. zagros is the sandbox where each is proven. Each track is
+something to learn and demonstrate there; none of them puts a moon-pod into operational use (see the
+[README's status section](../README.md#status-what-a-moon-pod-is-today)).
 
 ## How to read this
 
@@ -13,7 +13,7 @@ Each track has two parts:
 - **Why it matters** — the operational stake, and why proving it on the pod (rather than only on
   the goat side) is what makes it real for a partner.
 - **What to prove it out** — concrete work, laid out **crawl → walk → run**: a first demonstrable
-  result, a hardening pass, then the production milestone. The crawl step is deliberately
+  result, a hardening pass, then the fullest demonstration on the sandbox. The crawl step is deliberately
   small so a partner can get a green light fast.
 
 Everything here builds on what the pod already ships — the secure-pipe core (mesh client, mTLS
@@ -33,7 +33,7 @@ Two tracks are **foundational** — most others assume them:
 
 - **Identity & access control** establishes *who* a pod is and *what* it may do on both sides of
   the boundary. Every other track's trust claims rest on it.
-- **Sovereign secure data sharing** establishes the *clean two-way pipe* under partner custody.
+- **Secure two-way data sharing** establishes the *clean two-way pipe* from a pod the partner runs.
   It is the substrate the operational, QoS, and releasability tracks ride on.
 
 The other four (QoS, time hygiene, releasability/graduated-trust, operational data usage) can be
@@ -42,24 +42,20 @@ of that pipe.
 
 ---
 
-## Track 1 — Sovereign secure data sharing from the partner side
+## Track 1 — Secure two-way data sharing from the partner side
 
-**Slug:** `sovereign-data-sharing`
+**Slug:** `two-way-data-sharing`
 
 ### Why it matters
 
-This is the headline promise of the whole pattern: a partner shares data **into** the
-fabric (and receives data back) from **their own hardware, in their own facility, under their own
-custody** — without surrendering their data to someone else's cloud and without a months-long
-custom integration. For a data-sharing partnership, sovereignty is not a nicety; it is frequently the
-precondition for any sharing at all. A partner organisation that can read every line of
-what runs on its network, log every byte that crosses, and walk away with the bundle on any given
-day is a partner that can say *yes* to sharing. Proving the pod genuinely preserves that custody —
-that data lands on partner storage, partner operators authenticate against a partner-administered
-identity store, partner audit logs stay partner-held, and nothing is a black box — is what turns
-"trust us" into "verify us." The operational endpoint is a partner running a sovereign node that
-exchanges real operational data continuously, that they could fork and self-host any day, and never
-need to.
+This is the base the other tracks learn on: a partner shares data **into** the fabric (and
+receives data back) from a pod on hardware it runs, without a months-long custom integration. What
+the partner can check for itself is what runs on its host: every line of the bundle, every byte its
+audit sink observes, and a bundle it can walk away with. Proving the custody floor holds — data
+lands on partner storage, partner operators authenticate against a partner-administered identity
+store, partner audit logs stay partner-held — turns "trust us" into "verify us" for those three
+things. It is custody of the box, not sovereignty over what it exchanges (see the
+[README's status section](../README.md#status-what-a-moon-pod-is-today)).
 
 ### What to prove it out
 
@@ -73,17 +69,17 @@ need to.
   themselves: data at rest on the partner's LUKS-encrypted volume, `journalctl`/`docker logs`
   transparency on every container, the bundle/source open for inspection, and the "fork-and-self-host"
   exit path named. Validate it against the [seven requirements](partner-contract.md).
-- **Walk — durable, sovereign audit.** Move the audit-sink from observe-only to durable NDJSON on
+- **Walk — durable, partner-held audit.** Move the audit-sink from observe-only to durable NDJSON on
   the encrypted volume (and optionally a co-located object store with write-once retention), so the
   partner holds an independent, tamper-evident record of everything that crossed — not dependent on
   the goat side.
 - **Walk — custody hardening.** Exercise key/credential rotation, WG re-keying, and bundle
   re-mint without losing the partner's namespace or identity; prove the "reversibility" requirement
   by actually standing the coordination plane up partner-side in a lab.
-- **Run — operational sovereign node.** A partner runs the pod continuously against zagros carrying a
-  real data product (a sensor feed, an analytic layer, a fused data product), through a power-cycle and a
-  network-change, with the partner's own operators administering it end to end. This is the
-  reference a production partnership is measured against.
+- **Run — a long-running pod on the sandbox.** A partner runs the pod continuously against zagros
+  carrying a data product (a sensor feed, an analytic layer, a fused data product), through a
+  power-cycle and a network-change, with the partner's own operators administering it end to end.
+  It is the fullest demonstration the sandbox offers, not operational use.
 
 ---
 
@@ -232,8 +228,8 @@ same picture and coordinated off it. This track exists to push past plumbing and
 operational loop on top of everything the platform already provides — pub/sub, schema-described
 self-decoding data, the inspection surfaces, health, identity — so the value is shown in
 operational terms, not protocol terms. For a partner, a working proof-of-principle that they can see,
-touch, and recognize as *their* use case is the single most persuasive artifact for moving from a
-sandbox to a production system. The point is not a new capability; it is composing the
+touch, and recognize as *their* use case is the single most persuasive artifact the sandbox can
+produce. The point is not a new capability; it is composing the
 existing ones into something operationally legible.
 
 ### What to prove it out
@@ -252,7 +248,7 @@ existing ones into something operationally legible.
   two-way operational value, not just one-way telemetry.
 - **Run — a recognizable operational vignette.** Run a scripted, partner-recognizable scenario (a
   shared common picture, an alert-to-action, a coordinated two-team view) end to end on pod ↔ zagros,
-  capturing it as the demonstrable artifact that anchors the production conversation.
+  capturing it as the demonstrable artifact.
 
 ---
 
@@ -266,7 +262,7 @@ Every trust claim in every other track rests on this one: *who is this pod, who 
 behind it, what workload is publishing, and what is each allowed to do* — answered correctly on
 **both** sides of the boundary. The platform uses distinct identity domains for distinct subjects,
 and a partner deployment touches all of them at once: **human/service** operators authenticate
-through an identity provider the **partner administers** (sovereignty floor — their credential
+through an identity provider the **partner administers** (custody floor — their credential
 store, on their hardware); **machines** are admitted to the mesh by WireGuard peer identity with
 ACLs governing who may reach whom; **the data plane** is gated by **x509 mTLS** where the
 certificate is the write anchor — a pod publishes only within the namespace its cert authorizes,
@@ -274,9 +270,8 @@ and a write outside it is denied; and **workloads** can carry **attested SPIFFE/
 which the pod is uniquely well-placed to provide because it is a controlled bundle whose containers
 are attestable (unlike a bare external publisher). Getting this right is what lets a fabric
 extend trust to a partner *precisely* — not "they're on the network so they can do anything" but
-"this attested workload, run by this authenticated operator, may write exactly this namespace." For
-a partnership moving to production use, crisp, layered, sovereignty-respecting identity is the
-control plane that makes everything else safe to scale. (Foundation: mesh identity, slot-scoped
+"this attested workload, run by this authenticated operator, may write exactly this namespace."
+Crisp, layered identity is the control plane that would make everything else safe to scale. (Foundation: mesh identity, slot-scoped
 mTLS ACLs, and the SPIRE pattern are built and proven on zagros goat-side; the SPIRE pod overlay and
 federation are designed as a first-class optional overlay.)
 
@@ -291,7 +286,7 @@ federation are designed as a first-class optional overlay.)
   it shouldn't).
 - **Walk — partner-administered operator identity.** Wire an identity provider on the partner side
   (the local-IdP piece) so the pod's operators authenticate against a **partner-held** credential
-  store, and show the sovereignty floor holds (goat hosts no partner credentials).
+  store, and show the custody floor holds (goat hosts no partner credentials).
 - **Walk — attested workload identity (the SPIRE overlay).** Stand up the
   [SPIRE/SPIFFE overlay](workload-identity-spire-overlay.md) so the pod's containers carry
   short-lived attested SVIDs, and federate trust bundles so the goat-side ingress can verify the
@@ -302,21 +297,19 @@ federation are designed as a first-class optional overlay.)
 - **Run — precise, layered, end-to-end authorization.** Demonstrate the full stack on a live
   exchange: an authenticated operator, an attested workload, a mesh-admitted peer, and an
   mTLS-anchored namespace — composing into "*this* workload run by *this* operator may write
-  *exactly* this," with every layer independently verifiable. This is the control plane a
-  production partner deployment is governed by.
+  *exactly* this," with every layer independently verifiable.
 
 ---
 
 ## Picking a track
 
-- Want the fastest credible demo? **Sovereign secure data sharing** (Track 1) — the round-trip
+- Want the fastest credible demo? **Secure two-way data sharing** (Track 1) — the round-trip
   smoke + custody walkthrough is a green light in a day.
 - Want to de-risk the hardest operational claim? **QoS** (Track 2) or **Time hygiene** (Track 3) —
   both target the constrained-link conditions that break naive systems.
 - Want to unlock multi-party scale? **Releasability & graduated trust** (Track 4) — the governance
   that lets sharing grow past one bilateral pair.
-- Want the most persuasive artifact for a production conversation? **Operational
-  proof-of-principle** (Track 5) — a recognizable operational vignette.
+- Want the most persuasive artifact? **Operational proof-of-principle** (Track 5) — a recognizable operational vignette.
 - Want the foundation everything else rests on? **Identity & access control** (Track 6).
 
 Each track is written to stand alone, but **Identity** and **Sovereign data sharing** are the two

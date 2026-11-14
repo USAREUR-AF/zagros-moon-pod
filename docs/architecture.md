@@ -1,7 +1,8 @@
 # moon-pod — v0 architecture
 
 The v0 "secure-pipe core": the smallest bundle that moves data **both directions** securely
-and stays **partner-custodial**. See [`../README.md`](../README.md) for scope and [`partner-contract.md`](partner-contract.md) for the
+from a host the partner runs. See [`../README.md`](../README.md) for scope and its
+[status section](../README.md#status-what-a-moon-pod-is-today) for what a moon-pod is today and [`partner-contract.md`](partner-contract.md) for the
 boundary contract.
 
 ## Component placement: host vs compose
@@ -85,7 +86,7 @@ The earlier `../audit` and `../doctor` build-context stubs were an oversight (no
   gateway** (see "Receiver side" below), not directly into a core router. Observed locally by
   `audit-sink`.
 - **Inbound** (fabric → partner): the partner subscribes to the `<INBOUND_NAMESPACE>` prefix
-  (`release/goat/**` is the production convention; on the sandbox it falls back to the pod's own
+  (`release/goat/**` is the prefix a bilateral grant uses; on the sandbox it falls back to the pod's own
   slot until a bilateral grant exists); v0 consumption is **raw Zenoh via `goat-cli sub`**
   (translator is post-v0).
 
@@ -93,7 +94,7 @@ The earlier `../audit` and `../doctor` build-context stubs were an oversight (no
 
 A moon-pod is a **Tier-2 peer** under the federated-peering trust model
 (ADR 1020):
-it is partner-custodial and may be rooted in a different CA, so it is **not** the canonical
+it is partner-run and may be rooted in a different CA, so it is **not** the canonical
 goat↔goat (Tier-1) federation. That has a concrete consequence for the data path:
 
 - The pod's router does **not** federate directly into a goat core router. It connects to a
@@ -123,8 +124,8 @@ admitted shape is the receiver's concern.
   one identity for the whole POD, not a separate identity for each local application. Anything
   holding that key can do everything the POD can do, so grant read access only to services that
   need it and never copy the key to another host.
-- Fabric-TLS CA trust comes from the **bundle** (`ca_roots`), never compiled in — a partner pod
-  may be rooted in a production CA, not the dev sandbox CA. (`--trust-roots` is `goat-clientd`'s
+- Fabric-TLS CA trust comes from the **bundle** (`ca_roots`), never compiled in — a pod may be
+  pointed at an environment rooted in a CA other than the sandbox's. (`--trust-roots` is `goat-clientd`'s
   own flag, not `goat`'s.)
 - The bundle's **own signature** is verified by `goat` against a CA root the operator added to
   the pod's trust store (`goat ca add`, under the pod's profile dir on the state volume). That
@@ -137,7 +138,7 @@ admitted shape is the receiver's concern.
 
 ### Workload identity (optional overlay, Phase 3+)
 
-The pod's containers can additionally carry **attested workload identity** via a SPIRE/SPIFFE overlay — a **first-class optional overlay**, layered like the local-IdP choice. It is **not** required: the base pod meets the partner-receiver contract without it, and the easy deploy path stays an honest default. A partner who wants (or is required to have) cryptographically-attested workload identity reaches for the overlay; offering the simple default does not withhold the capability. SPIRE runs inside the pod (sovereignty-clean — goat hosts no partner SVIDs); federation exchanges only public trust bundles so the goat-side ingress gateway can verify the pod router's identity. Design + rationale: [`workload-identity-spire-overlay.md`](workload-identity-spire-overlay.md); the runnable overlay itself (compose file, SPIRE configs, federation model, manual bring-up — experimental, not first-boot-wired): [`spire-federation-overlay.md`](spire-federation-overlay.md).
+The pod's containers can additionally carry **attested workload identity** via a SPIRE/SPIFFE overlay — a **first-class optional overlay**, layered like the local-IdP choice. It is **not** required: the base pod meets the partner-receiver contract without it, and the easy deploy path stays an honest default. A partner who wants (or is required to have) cryptographically-attested workload identity reaches for the overlay; offering the simple default does not withhold the capability. SPIRE runs inside the pod (custody-clean — goat hosts no partner SVIDs); federation exchanges only public trust bundles so the goat-side ingress gateway can verify the pod router's identity. Design + rationale: [`workload-identity-spire-overlay.md`](workload-identity-spire-overlay.md); the runnable overlay itself (compose file, SPIRE configs, federation model, manual bring-up — experimental, not first-boot-wired): [`spire-federation-overlay.md`](spire-federation-overlay.md).
 
 ## Profiles (environment shape)
 

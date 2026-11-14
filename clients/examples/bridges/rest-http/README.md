@@ -32,7 +32,7 @@ curl 'http://127.0.0.1:8080/sub/release/goat/**?count=1'   # inbound from goat
 ```
 
 > **zagros note:** on the zagros sandbox inbound arrives on your own slot, so subscribe to
-> `<your-slot>/**` — `release/goat/**` is the production convention and is empty there
+> `<your-slot>/**` — `release/goat/**` is the prefix a bilateral grant uses and is empty there
 > (see [`clients/README.md`](../../../README.md)).
 
 **Stream continuously** (Server-Sent Events — one `data:` line per sample):

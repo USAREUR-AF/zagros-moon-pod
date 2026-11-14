@@ -1,12 +1,25 @@
 # zagros-moon-pod
 
-The **moon-pod** — the minimal, partner-custodial software bundle that lets a partner
-organisation share data **bidirectionally and securely** with a goat data fabric, running on
-**their own hardware, in their facility, under their custody and transparency**.
+The **moon-pod** — a minimal software bundle that joins a goat data fabric from a host its
+operator runs, and exchanges data with it in both directions. Read
+[Status](#status-what-a-moon-pod-is-today) first: it says what a moon-pod is used for today and
+what it does not give you.
 
-This repo is where the pod is developed with the partners who run it. The **content is
-leak-free**: self-contained, with no goat-internal infrastructure, links, or credentials, so
-everything here is safe to read, fork, and build against.
+This repo is where the pod is developed. The **content is leak-free**: self-contained, with no
+goat-internal infrastructure, links, or credentials, so everything here is safe to read, fork,
+and build against.
+
+## Status: what a moon-pod is today
+
+- **It is used only to learn.** A moon-pod is rung 2 of the goat learner ladder: you build one
+  and join a goatnet with it. It is not in operational use.
+- **It is not a sovereignty guarantee.** A pod joins an environment someone else runs, and that
+  environment's owner controls enrolment, the access rules, and what data may leave the pod.
+- **It could become a real capability on one condition:** the pod's operator treats the
+  environment owner as trusted, and as the authority over the pod's ability to move data outside
+  the pod.
+- **A party that needs sovereignty runs its own environment** and federates with others across a
+  boundary. That is a different thing from a moon-pod.
 
 ## In plain language — what this is and what it's for
 
@@ -16,26 +29,23 @@ custom integration.
 
 Think of it as a **sealed, two-way mailbox** both sides understand:
 
-- **You run it on your own hardware, in your own facility, on your own power.** You have full
-  custody and transparency — the code is Apache-2.0, yours to read, log, and fork. That's the sovereignty promise: nobody puts a black box on your
-  network or pulls your data into someone else's cloud.
+- **You run it on your own hardware.** The code is Apache-2.0, yours to read, log, and fork.
+  Running the box is not the same as controlling what it exchanges: see [Status](#status-what-a-moon-pod-is-today).
 - **It speaks goat's language.** Even though it lives on your side, it is built to the fabric's
   security rules (identity, encryption, access control), so when data crosses, both sides trust
   the pipe.
 - **Data flows both ways.** You publish under your own namespace; the fabric sends you data on
-  your inbound prefix when the relationship is bilateral (`release/goat/**` is the production
-  convention; on the zagros sandbox the inbound prefix falls back to your own slot until a
-  bilateral grant exists).
+  your inbound prefix when the relationship is bilateral (`release/goat/**` is the prefix a
+  bilateral grant uses; on the zagros sandbox the inbound prefix falls back to your own slot until
+  such a grant exists).
 - **Everything that crosses is observed** on your side — the v0 audit-sink subscribes to your
   namespace and exposes metrics (observe-only). A durable local log on your encrypted volume is
   the documented follow-up; until then, retention is a step you own (partner-contract req 4).
 
-**What it's for:** a partner has data the fabric wants (sensor feeds, analytics, a data
-product) — or needs data the fabric has. The moon-pod makes that **turnkey**: stand up the pod,
-get granted a topic, declare it, and data flows securely in hours instead of a procurement
-cycle.
+**What it's for today:** learning how a pod joins a goatnet and exchanges data with it. Stand
+up the pod, get granted a topic, declare it, and publish and subscribe on the zagros sandbox.
 
-The contract the pod meets at the boundary — the seven requirements, the sovereignty floor, and
+The contract the pod meets at the boundary — the seven requirements, the custody floor, and
 how the goat side receives a pod's data — is documented self-contained in
 [`docs/partner-contract.md`](docs/partner-contract.md).
 
@@ -59,7 +69,7 @@ profile + the signed bundle. See [`docs/zagros-vs-production.md`](docs/zagros-vs
 
 The full moon-pod spec defines six pieces (network client, Zenoh router, translation engine,
 local IdP, audit sink, operator web UI). This bundle ships the **minimal core that moves data
-both ways securely and stays partner-custodial**, and defers the productization layers.
+both ways securely**, and defers the productization layers.
 
 | Piece | Here | Deferred |
 |---|---|---|
@@ -167,8 +177,9 @@ zagros-moon-pod/
   why, [`docs/spire-federation-overlay.md`](docs/spire-federation-overlay.md) for the runnable
   overlay (not first-boot-wired; manual bring-up).
 - **Choosing what to prove out (focus areas):** [`docs/proof-out-tracks.md`](docs/proof-out-tracks.md) —
-  candidate tracks (sovereign sharing, QoS, time hygiene, releasability/graduated trust,
-  operational use, identity/access), each with why it matters + crawl→walk→run work.
+  candidate tracks to learn on the sandbox (two-way sharing, QoS, time hygiene,
+  releasability/graduated trust, operational use, identity/access), each with why it matters +
+  crawl→walk→run work.
 - **Co-developing this repo:** [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 Working in [Claude Code](https://claude.com/claude-code)? The clone ships skills under
@@ -181,9 +192,9 @@ namespace, setup key) and a pod host.
 
 ## Contributing
 
-Keep it leak-free. This bundle is partner-custodial, so nothing goat-internal —
-hostnames, credentials, RIDs, or infrastructure references — belongs in it; that
-guarantee is what lets a partner read and build against the pod. The standup and
+Keep it leak-free. This bundle runs on a host its operator controls and is read by anyone, so
+nothing goat-internal — hostnames, credentials, RIDs, or infrastructure references — belongs in
+it; keeping it leak-free is what lets anyone read and build against the pod. The standup and
 verification motions are captured as runnable skills under `.claude/skills/`
 (`pod-standup`, `pod-verify`, `pod-host-bringup`); prefer them over
 reimplementing the equivalent shell. `shellcheck -x` scripts you touch.

@@ -9,7 +9,7 @@ end-to-end.
 
 The base pod meets the partner contract **without** workload identity. This overlay is the
 first-class option for a partner that wants (or is required to have) **attested** workload
-identity for the pod's own containers — and it does it the sovereignty-clean way:
+identity for the pod's own containers — and it does it the custody-clean way:
 
 - The pod runs its **own** SPIRE server = its **own** trust domain (`spiffe://<partner>.pod`) =
   its **own** root CA. It issues and rotates its workloads' SVIDs **locally**.

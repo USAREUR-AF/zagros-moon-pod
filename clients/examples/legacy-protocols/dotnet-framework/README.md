@@ -62,7 +62,7 @@ REM Subscribe: block for N samples (GET /sub/<keyexpr>?count=N&timeout=S)
 GoatBridgeClient.exe sub sensors/temp                       REM wait for 1 sample
 GoatBridgeClient.exe sub sensors/temp 5 60                  REM wait for 5, up to 60s
 GoatBridgeClient.exe sub release/goat/** 3           REM inbound from goat (full key; on zagros
-REM   inbound arrives on your own slot instead — release/goat/** is the production convention)
+REM   inbound arrives on your own slot instead — release/goat/** is the prefix a bilateral grant uses)
 
 REM Stream continuously (GET /stream/<keyexpr>, Server-Sent Events)
 GoatBridgeClient.exe stream sensors/temp                    REM Ctrl-C to stop

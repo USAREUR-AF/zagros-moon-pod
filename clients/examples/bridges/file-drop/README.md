@@ -35,8 +35,8 @@ python3 bridge.py
 ```
 
 > **zagros note:** on the zagros sandbox inbound arrives on your own slot, so set
-> `SUB_KEYEXPR='<your-slot>/**'` — `release/goat/**` is the production convention and is empty
-> there (see [`clients/README.md`](../../../README.md)).
+> `SUB_KEYEXPR='<your-slot>/**'` — `release/goat/**` is the prefix a bilateral grant uses and is
+> empty there (see [`clients/README.md`](../../../README.md)).
 
 Try it:
 ```sh

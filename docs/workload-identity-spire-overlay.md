@@ -14,7 +14,7 @@ The base pod meets the seven-requirement partner-receiver contract **without** w
 
 - **The pod is a controlled bundle**, so its workloads *are* attestable (a SPIRE agent ships in the bundle) — unlike a bare external publisher running on unmanaged hardware.
 - **SPIFFE federation is the designed cross-trust-domain mechanism.** The pod runs its own trust domain (`spiffe://<partner>.pod`); it federates **trust bundles** (public keys only) with the goatnet trust domain. The pod's Zenoh router then carries a cryptographically-attested identity the goat-side ingress gateway can verify — an upgrade over trusting the setup key embedded in the signed bundle.
-- **Sovereignty-clean.** SPIRE runs inside the pod, on partner hardware. Goat hosts no partner SVIDs. Federation exchanges only public trust bundles — same posture as the partner-net coordination-metadata carve-out.
+- **Custody-clean.** SPIRE runs inside the pod, on partner hardware. Goat hosts no partner SVIDs. Federation exchanges only public trust bundles — same posture as the partner-net coordination-metadata carve-out.
 
 ## Integration nuance (carried from the goat-side analysis)
 

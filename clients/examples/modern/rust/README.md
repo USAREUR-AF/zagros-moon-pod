@@ -32,7 +32,7 @@ cargo run --bin subscribe -- '<keyexpr>' 5              # stop after 5 samples
 ```
 
 > **zagros note:** on the zagros sandbox inbound arrives on your own slot, so subscribe to
-> `<your-slot>/**` — `release/goat/**` is the production convention and is empty there
+> `<your-slot>/**` — `release/goat/**` is the prefix a bilateral grant uses and is empty there
 > (see [`clients/README.md`](../../../README.md)).
 
 **Quick round-trip:** run `cargo run --bin subscribe` in one terminal, `cargo run --bin publish
