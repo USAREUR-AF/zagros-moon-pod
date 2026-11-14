@@ -116,7 +116,7 @@ your real one comes from your bundle.
       {
         // Inbound bilateral data the fabric publishes TO you. Rendered from ${INBOUND_NAMESPACE};
         // on the zagros sandbox that falls back to your own slot (as here) until a bilateral grant
-        // exists — release/goat/** is the production convention.
+        // exists — release/goat/** is the prefix a bilateral grant uses.
         id: "pod-inbound-local-interest",
         messages: ["declare_subscriber", "query", "declare_liveliness_subscriber", "liveliness_query"],
         flows: ["ingress"],
@@ -196,7 +196,7 @@ Zenoh's ACL is three lists that compose:
 - **rules** — named permission grants. `pod-firstparty` allows pub/sub on `<your-slot>/**`. The
   four `pod-inbound-*` rules let local clients declare interest and receive data while only the
   fabric peer can originate data and responses in `${INBOUND_NAMESPACE}` (your own slot on the
-  sandbox; `release/goat/**` once bilateral in production).
+  sandbox; `release/goat/**` once a bilateral grant exists).
 - **subjects** — named identity matchers. `pod-peer` matches the pod leaf's certificate CN;
   `fabric-peer` matches the independently verified CN presented by the upstream router. The CA
   still authenticates both certificates, while the CN keeps fabric-wide interest off local client

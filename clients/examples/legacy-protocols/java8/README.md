@@ -62,7 +62,7 @@ java Subscribe sensors/temp stream                 # follow continuously (Ctrl-C
 ```
 
 > **zagros note:** on the zagros sandbox inbound arrives on your own slot, so subscribe to
-> `<your-slot>/**` — `release/goat/**` is the production convention and is empty there
+> `<your-slot>/**` — `release/goat/**` is the prefix a bilateral grant uses and is empty there
 > (see [`clients/README.md`](../../../README.md)).
 
 Subscribe prints the raw JSON the bridge returns — for `/sub` a JSON array, for `/stream` one JSON

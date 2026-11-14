@@ -41,7 +41,7 @@ Starting from bare hardware? [`pod-host-bringup.md`](pod-host-bringup.md) takes 
 blank machine (Raspberry Pi 5 worked example included) to every box below checked.
 
 - A Linux host you control, with data on a **LUKS-encrypted volume** (the pod's state dir must
-  live there — sovereignty requirement 6a).
+  live there — custody-floor requirement 6a).
 - **Docker** + the compose plugin.
 - A **mesh client**: stock NetBird is the zagros on-ramp (`netbird up` with the bundle's setup-key);
   the production path uses `goat-clientd` and first-boot drives it for you.
@@ -270,7 +270,7 @@ you dropped the `sudo`; the profile is there.
   use liveliness for presence. Read [`quality-of-service.md`](quality-of-service.md) for which
   reliability each of your streams actually needs (don't over-buy guarantees).
 - **Inbound (bilateral):** when a bilateral inbound channel is granted, subscribe to the
-  `INBOUND_NAMESPACE` prefix from your profile (`release/goat/**` is the production convention;
+  `INBOUND_NAMESPACE` prefix from your profile (`release/goat/**` is the prefix a bilateral grant uses;
   on zagros it falls back to your own slot until the grant exists).
 
 ## Declare your topics

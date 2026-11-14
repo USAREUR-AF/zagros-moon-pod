@@ -23,7 +23,7 @@ python3 request_reply.py get       # query it
 ```
 
 > **zagros note:** on the zagros sandbox inbound arrives on your own slot, so subscribe to
-> `<your-slot>/**` — `release/goat/**` is the production convention and is empty there
+> `<your-slot>/**` — `release/goat/**` is the prefix a bilateral grant uses and is empty there
 > (see [`clients/README.md`](../../../README.md)).
 
 Quick round-trip: run `subscribe.py` in one terminal, `publish.py` in another.

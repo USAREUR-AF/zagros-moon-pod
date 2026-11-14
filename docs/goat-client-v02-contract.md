@@ -87,8 +87,8 @@ Signature: ECDSA-signed over **canonical CBOR** (CTAP2 shortest-int, sorted keys
 (portal_endpoint/token, router_endpoint, mtls_cert/key, ca_roots) is consumed by **goat-cli**,
 not goat-clientd. The pod uses **one combined bundle** carrying both mesh-enrollment + goat_cli_extras.
 
-**CA trust comes from the bundle / `--trust-roots`, not a compiled-in pin** — a partner pod may be
-rooted in a production CA, not the dev sandbox CA.
+**CA trust comes from the bundle / `--trust-roots`, not a compiled-in pin** — a pod may be pointed at an
+environment rooted in a CA other than the sandbox's.
 
 ## IPC contract (internal/ipc/ipc.go) — JSON-RPC 2.0, newline-framed, uid-authed
 

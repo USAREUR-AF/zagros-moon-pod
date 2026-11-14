@@ -16,7 +16,7 @@
 # docs/spire-federation-overlay.md for the run steps, the bundle bootstrap, and the reciprocal
 # goat-side config. This is the ADR 0412 (addendum 2026-06-19) partner-pod federation, made real.
 #
-# Sovereignty: the partner CA private key never leaves the pod. Each side's SPIRE is a SPOF for its
+# Custody: the partner CA private key never leaves the pod. Each side's SPIRE is a SPOF for its
 # OWN domain only — federation contains the SPOF, it does not create or remove one.
 #
 # Images: digest-pinned (ADR 0859) known-good versions — SPIRE 1.11.2

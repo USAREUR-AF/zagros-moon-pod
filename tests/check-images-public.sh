@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-images-public.sh — assert every image referenced in the compose files
-# (compose/docker-compose*.yml, base + overlays) is ANONYMOUSLY pullable. A partner-custodial
+# (compose/docker-compose*.yml, base + overlays) is ANONYMOUSLY pullable. A partner-run
 # pod has no usareur-af ghcr credentials, so a private image is a hard deploy blocker. Run before any pod
 # deploy; wire into CI for the pod repo.
 #

@@ -90,7 +90,7 @@ http://127.0.0.1:8080/...` works but no data flows, suspect the bridge→pod TLS
   suffix like `sensors/temp` is automatically scoped to `<your-namespace>/sensors/temp`. A full key
   you have read rights to (e.g. `release/goat/**`) is passed through as-is.
 - **zagros note:** on the zagros sandbox your namespace is your per-uuid slot and inbound arrives on
-  that same slot — `release/goat/**` is the production convention and is empty there
+  that same slot — `release/goat/**` is the prefix a bilateral grant uses and is empty there
   (see [`clients/README.md`](../../README.md)).
 - The fabric is **payload-agnostic** — bytes are bytes. These examples send JSON text because it's
   readable, but you can send anything. The REST bridge returns received text as `"text"` in its JSON,

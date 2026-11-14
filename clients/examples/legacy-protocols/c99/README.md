@@ -89,7 +89,7 @@ export GOAT_NAMESPACE="release/acme"
 ```
 
 > **zagros note:** on the zagros sandbox inbound arrives on your own slot, so subscribe to
-> `<your-slot>/**` — `release/goat/**` is the production convention and is empty there
+> `<your-slot>/**` — `release/goat/**` is the prefix a bilateral grant uses and is empty there
 > (see [`clients/README.md`](../../../README.md)).
 
 **Quick round-trip:** run `./subscribe` in one terminal, `./publish 10 500` in another. The JSON

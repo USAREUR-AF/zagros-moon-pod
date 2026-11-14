@@ -52,7 +52,7 @@ publish('sensors/temp', '21.5', 'Count', 10, 'IntervalSec', 0.2)   % 10 samples,
 s = receive_rest('sensors/temp');                          % wait for 1 sample
 s = receive_rest('sensors/temp', 'Count', 5, 'TimeoutSec', 60);
 s = receive_rest('release/goat/**', 'Count', 3);    % inbound from goat (full key; on zagros
-%   inbound arrives on your own slot instead — release/goat/** is the production convention)
+%   inbound arrives on your own slot instead — release/goat/** is the prefix a bilateral grant uses)
 disp(s(1).key)      % 'release/acme/sensors/temp'
 disp(s(1).text)     % '21.5'   (or s(1).b64 for non-UTF-8 bytes)
 ```

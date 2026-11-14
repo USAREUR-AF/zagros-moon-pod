@@ -207,7 +207,7 @@ git -C zagros-moon-pod archive HEAD | ssh <user>@<pod-host> 'mkdir -p zagros-moo
 
 The pod's state dir (`/var/lib/goat-moon` by default) must live on a LUKS-encrypted volume:
 your keys, your audit log, and the router's storage sit there, and encryption at rest is
-sovereignty requirement 6a in [`partner-contract.md`](partner-contract.md). `first-boot.sh`
+custody-floor requirement 6a in [`partner-contract.md`](partner-contract.md). `first-boot.sh`
 warns if you skip this; it does not stop you. Meeting the contract is on you.
 
 Two ways to provide it. A **dedicated partition** is the clean option if your disk layout has

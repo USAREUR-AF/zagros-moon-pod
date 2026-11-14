@@ -23,7 +23,7 @@ Three operations, that's the whole API:
 > **zagros note:** on the zagros sandbox your namespace is the per-uuid **slot** from your bundle
 > (not `release/<you>`), and inbound falls back to that same slot until a bilateral grant
 > exists — a `release/goat/**` subscription is simply empty there. The `release/...` forms in
-> the examples are the production convention; substitute your slot on zagros.
+> the examples are the prefixes a bilateral grant uses; substitute your slot on zagros.
 
 Keys are slash-paths (`a/b/c`); subscriptions can use `*` (one segment) and `**` (any depth).
 
