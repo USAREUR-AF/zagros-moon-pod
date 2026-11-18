@@ -201,10 +201,11 @@ The reference host OS is **Ubuntu 24.04 LTS**; see the host guide's
 Working in [Claude Code](https://claude.com/claude-code)? The clone ships skills under
 `.claude/skills/` that drive the bring-up, standup, and verification docs interactively.
 
-Verification status: CI runs the public-image guard, catalog-helper tests, setup regression,
-first-boot identity staging, stubbed setup paths, and shellcheck baselines. These tests use no
-live credentials. Real POD-token catalog evidence and full zagros acceptance remain explicitly
-open until a partner runs the live procedure in the run guide.
+Verification status: CI runs the public-image guard, catalog-helper tests on Python 3.9, setup
+regression, first-boot identity staging, stubbed setup paths, and shellcheck baselines. These tests
+use no live credentials. On 2026-11-18, setup ran end to end on an enrolled test POD running stock
+Ubuntu 24.04 LTS. Part 3 returned `Verified` with delivery `Delivered`, using only the POD's own
+credentials. A STIG-hardened host and other Linux hosts have not been tested.
 
 ## Contributing
 
