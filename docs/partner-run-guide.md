@@ -217,7 +217,8 @@ that carries them.
 1. **Your onboarding tarball**, when the goat side configured it: `<prefix>-goat-cli-ca.pem`,
    next to the `<prefix>-goat-cli.cbor` it verifies. `moon_pod_setup.sh` unpacks the tarball for
    you and uses this file when `CA_ROOT_PEM` is unset, once you have confirmed its fingerprint
-   (below). Check with
+   (below). To return to the tarball's root after setting a path, enter `-` at the CA root prompt
+   in **Configure inputs**. Check with
    `tar tzf <pod-id>-bundle.tar.gz | grep -- -goat-cli-ca.pem`.
 2. **An already-enrolled workstation**, when the tarball has no such file. Copy the trusted
    CA root from that workstation along with the binary, or ask the goat side

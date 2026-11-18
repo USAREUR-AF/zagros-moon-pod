@@ -341,8 +341,19 @@ NETBIRD_MANAGEMENT_URL=https://management.example
 NETBIRD_SETUP_KEY=unused-secret; NETBIRD_SETUP_KEY_FILE=""
 : > "$STUB/untrusted-ca"; cp "$STUB/need-login.json" "$NETBIRD_JSON"
 tarball_ca_probe || fail_test "CA root in the onboarding tarball was not found"
-part2_preflight > "$WORK/tarball-preflight.out" 2>&1 \
-    || fail_test "Part 2 pre-flight rejected the CA root in the onboarding tarball"
+CA_ROOT_PEM="$WORK/missing-configured-ca.pem"
+expect_failure "Part 2 pre-flight accepted a missing configured CA root" \
+    part2_preflight > "$WORK/missing-configured-ca.out" 2>&1
+configured_ca_output=$(sed 's/^  //' "$WORK/missing-configured-ca.out" | tr -d '\n')
+[[ "$configured_ca_output" == *"$CA_ROOT_PEM"* ]] \
+    || fail_test "missing configured CA root message did not name the path"
+grep -q 'enter - there to' "$WORK/missing-configured-ca.out" \
+    || fail_test "missing configured CA root message did not explain how to clear it"
+assert_absent 'get it from the goat side' "$WORK/missing-configured-ca.out" \
+    "missing configured CA root incorrectly blamed the goat side"
+CA_ROOT_PEM=""
+part2_preflight > "$WORK/cleared-root-preflight.out" 2>&1 \
+    || fail_test "Part 2 pre-flight rejected the tarball root after the path was cleared"
 : > "$STUB/long-help"
 part2_preflight > "$WORK/long-help-preflight.out" 2>&1 \
     || fail_test "Part 2 pre-flight rejected NetBird help longer than the pipe buffer"
@@ -550,11 +561,17 @@ typed-setup-key
 
 EOF
 
+run_configure() {
+    local message="${3:-Configure inputs rejected valid answers}"
+    configure_inputs < "$1" > "$2" \
+        || fail_test "$message"
+}
+
 command() {
     if [ "${1:-}" = -v ] && [ "${2:-}" = netbird ]; then return 1; fi
     builtin command "$@"
 }
-configure_inputs < "$WORK/configure-answers" > "$WORK/configure-not-installed.out"
+run_configure "$WORK/configure-answers" "$WORK/configure-not-installed.out"
 [ "$NETBIRD_SETUP_KEY" = typed-setup-key ] || {
     echo "FAIL: configure inputs did not collect the key before NetBird installation" >&2
     exit 1
@@ -586,7 +603,7 @@ NETBIRD_MANAGEMENT_URL=""; BUNDLE_TARBALL="$WORK/pod.tar.gz"
 BUNDLE_PATH="$BUNDLE"; CA_ROOT_PEM=""; EXPECTED_CA_FINGERPRINT=""
 NETBIRD_SETUP_KEY=""
 cp "$STUB/need-login-legacy.txt" "$NETBIRD_JSON"
-configure_inputs < "$WORK/configure-answers" > "$WORK/configure-legacy.out"
+run_configure "$WORK/configure-answers" "$WORK/configure-legacy.out"
 [ "$NETBIRD_SETUP_KEY" = typed-setup-key ] || {
     echo "FAIL: configure inputs did not collect the key from legacy NetBird" >&2
     exit 1
@@ -609,6 +626,27 @@ if [ "$PARTNER_NAMESPACE" != slot-a ] || [ "$POD_ID" != pod-1 ] \
     echo "FAIL: legacy configure inputs did not reload saved values" >&2
     exit 1
 fi
+
+CA_ROOT_PEM="$WORK/missing-configured-ca.pem"
+printf '%s\n' '' '' '' '' '' '' '-' '' '' '' > "$WORK/configure-clear-answers"
+run_configure "$WORK/configure-clear-answers" "$WORK/configure-clear.out" \
+    "Configure inputs could not clear the saved CA root path"
+[ -z "$CA_ROOT_PEM" ] \
+    || fail_test "Configure inputs did not clear the saved CA root path"
+[ "$(grep -c '^CA_ROOT_PEM=$' "$INPUT_STATE_FILE")" -eq 1 ] \
+    || fail_test "Configure inputs did not persist the cleared CA root path"
+CA_ROOT_PEM=""
+reset_input_env_flags
+load_saved_inputs
+[ -z "$CA_ROOT_PEM" ] \
+    || fail_test "Configure inputs restored the cleared CA root path"
+
+CA_ROOT_PEM="$WORK/missing-configured-ca.pem"
+printf '%s\n' '' '' '' '' '' '' '' '' '' '' > "$WORK/configure-keep-answers"
+run_configure "$WORK/configure-keep-answers" "$WORK/configure-keep.out"
+[ "$CA_ROOT_PEM" = "$WORK/missing-configured-ca.pem" ] \
+    || fail_test "Configure inputs did not keep the CA root path on a blank answer"
+
 NETBIRD_SETUP_KEY=""
 { show_header; show_status; } > "$WORK/terminal-rerun.out"
 grep -q 'slot-a' "$WORK/terminal-rerun.out"
@@ -957,7 +995,9 @@ python3 - "$WORK/terminal-first.out" "$WORK/terminal-rerun.out" \
     "$WORK/terminal-verified.out" "$WORK/missing-goatnet.out" \
     "$WORK/clock-failed.out" "$WORK/not-verified.out" "$WORK/part3.out" \
     "$WORK/uppercase-pod-id.out" "$WORK/missing-router-slot.out" \
-    "$WORK/changed-router-slot.out" "$WORK/tarball-preflight.out" \
+    "$WORK/changed-router-slot.out" "$WORK/cleared-root-preflight.out" \
+    "$WORK/missing-configured-ca.out" "$WORK/configure-clear.out" \
+    "$WORK/configure-keep.out" \
     "$WORK"/gate-part*-missing.out "$WORK"/gate-part*-disconnected.out <<'PY'
 import pathlib
 import sys

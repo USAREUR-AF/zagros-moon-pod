@@ -1215,7 +1215,15 @@ part2_preflight() {
     bundle_present_probe \
         || { fail "the signed join bundle is missing; get the tarball or .cbor from the goat side"; return 1; }
     valid_absolute_path "$CA_ROOT_PEM" \
-        || { fail "CA_ROOT_PEM is invalid; get the CA root from the goat side"; return 1; }
+        || { fail "CA_ROOT_PEM is invalid; choose Configure inputs"; return 1; }
+    if ! ca_root_trusted_probe && [ -n "$CA_ROOT_PEM" ] \
+            && [ ! -f "$CA_ROOT_PEM" ]; then
+        fail "the configured CA root path is not a file:"
+        printf '%s\n' "$CA_ROOT_PEM" | fold -w 74 | sed 's/^/  /'
+        echo "  Choose Configure inputs and correct the path, or enter - there to"
+        echo "  clear it and use the .pem from the bundle tarball."
+        return 1
+    fi
     ca_root_or_pem_probe \
         || { fail "CA_ROOT_PEM (or the .pem in the bundle tarball) is missing; get it from the goat side"; return 1; }
     if ! ca_root_trusted_probe; then
@@ -1932,7 +1940,7 @@ show_required_inputs() {
   PARTNER_NAMESPACE             goat side; slot ID in the welcome package
   POD_ID                        goat side, in the welcome package
   signed join bundle            goat side; tarball or .cbor
-  CA_ROOT_PEM                   goat side; or the .pem in the bundle tarball
+  CA_ROOT_PEM                   optional if trusted; goat side or tarball .pem
   EXPECTED_CA_FINGERPRINT       goat side, separately from the CA root
   goat binary + .sha256         goat side, in the welcome package
   host, Docker, encrypted state partner, prepared in Part 1
@@ -1962,8 +1970,12 @@ configure_inputs() {
     [ -n "$value" ] && NETBIRD_MANAGEMENT_URL="$value"
     read -r -p "  BUNDLE_TARBALL [$BUNDLE_TARBALL]: " value; [ -n "$value" ] && BUNDLE_TARBALL="$value"
     read -r -p "  BUNDLE_PATH [$BUNDLE_PATH]: " value; [ -n "$value" ] && BUNDLE_PATH="$value"
-    read -r -p "  CA root path (optional if already trusted) [$CA_ROOT_PEM]: " value
-    [ -n "$value" ] && CA_ROOT_PEM="$value"
+    read -r -p "  CA root path (blank keeps, - clears) [$CA_ROOT_PEM]: " value
+    if [ "$value" = "-" ]; then
+        CA_ROOT_PEM=""
+    elif [ -n "$value" ]; then
+        CA_ROOT_PEM="$value"
+    fi
     read -r -p "  EXPECTED_CA_FINGERPRINT (required unless a CA root is already trusted) [$EXPECTED_CA_FINGERPRINT]: " value
     [ -n "$value" ] && EXPECTED_CA_FINGERPRINT="$value"
     if [ "$POD_ID_EXPLICIT" -ne 1 ]; then
