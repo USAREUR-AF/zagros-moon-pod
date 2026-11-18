@@ -193,9 +193,9 @@ curl -fsS http://127.0.0.1:9303/metrics | grep '^goat_audit_samples_total'
 ```
 
 A local metric rise with no catalog rise is **not confirmed fabric delivery**. Leave the router
-running, retain the key and timestamp, and report the result to the goat-side operator. Do not
-stop the router and publish directly to the fabric: that bypasses the path this check is meant to
-prove.
+running, keep the key, the payload nonce, and the UTC publish time, and report all three to the
+goat-side operator. Do not stop the router and publish directly to the fabric: that bypasses
+the path this check is meant to prove.
 
 If the endpoint presents a certificate name different from the last healthy run, first-boot stops
 before rendering. The goat-side operator owns confirmation of the new name through the trusted
