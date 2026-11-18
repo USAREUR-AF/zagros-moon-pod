@@ -5,35 +5,28 @@ description: Use when checking whether a running moon-pod is healthy or diagnosi
 
 # Pod verify
 
-Run the verification ladder from
+Run the verification flow from
 [docs/partner-run-guide.md](../../../docs/partner-run-guide.md) (Verify and Trouble sections)
 and route failures to the doc that owns them. The docs are the source of truth; this skill is
 the order to check things in.
 
-## First principle: silence is a verdict, not a bug
+## First principle: report what the evidence proves
 
-Publishes outside the pod's slot are **silently denied by design**. A publish that "succeeds"
-with nothing arriving, or an empty subscription, is an ACL answer before it is a debugging
-target. Check WHERE the data was published against the slot before touching any config.
+Publishes outside the slot ID are silently denied by design, but a missing catalog update is
+not proof of denial. Refused, throttled, timed-out, missing, or unreachable evidence is
+**Not verified** with the cause named. Never give a POD token operator audit access.
 
-## The ladder (in order, stop at the first failure)
+## The verification command
 
-| Step | Command | Pass looks like |
-|---|---|---|
-| 1. Mesh | `netbird status` | Connected |
-| 2. Health | `sudo GOAT_PROFILE_DIR=/var/lib/goat-moon/goat-cli goat doctor --all` | cert + router checks green |
-| 3. Containers | `sudo docker ps` | `goat-moon-zenoh-router` Up (`goat-moon-audit-sink` only with the opt-in `audit` profile) |
-| 4. Real data path | Keep the router running. Note the slot's portal-catalog `publish_count`, publish one uniquely named message through `tls/127.0.0.1:7447` with the partner's normal application or a client under `clients/`, check `goat_audit_samples_total`, then refresh the catalog for up to three minutes | both the local audit count and slot catalog count rise |
-| 5. Doctor timer | `cat /var/lib/goat-moon/doctor/status.json`; check its timestamp advances across 60s | fresh status, no `status.json.last-fail` |
+Run `sudo bash moon_pod_setup.sh` and choose Part 3. Preserve the overall `Verified`,
+`Not verified`, or `Failed` result and the delivery outcome: `Publish failed`, `Not delivered`,
+`Not verified`, `Local only`, or `Delivered`. The mesh passes only with the exact management
+state and peers greater than zero. Delivery baselines both counts, uses the fixed
+`<slot>/test/ping` key with a unique payload nonce through the running local router, and treats
+the catalog as aggregate slot evidence.
 
-Step 4 must exercise the local router. Stopping it and running `goat pub` directly against the
-fabric bypasses the router ACL and cannot prove the partner data path. A local audit rise alone
-proves only local delivery; without a catalog rise, fabric delivery is not confirmed. Leave the
-router running and retain the test key and timestamp when handing an ambiguous result to the
-goat-side operator.
-
-A pod is "up" when all five pass. Report which step failed and what it printed; never
-summarize a failure as "network issues".
+Part 3 never stops or starts the router. Report each
+verdict and its printed cause; do not collapse them into “network issues” or “POD verified.”
 
 ## Symptom routing
 
@@ -44,6 +37,8 @@ summarize a failure as "network issues".
 | `fabric router certificate name changed` | first-boot stopped before rendering. The goat-side operator confirms the new name through the trusted onboarding channel; the partner sets the confirmed `ZENOH_FABRIC_CERT_CN`, re-runs, and verifies the restart |
 | New router config was rejected; previous config is running | service was rolled back but the run failed. Check profile inputs, retain the displayed logs, correct the cause, and re-run |
 | Rollback refused after an identity change | leave the router stopped. The goat-side operator confirms the intended POD and fabric identities; correct the bundle or profile and re-run. Never restore the saved file by hand |
+| Delivery is `Not verified` | follow the printed next step; share the cause and UTC test time if it persists |
+| Delivery is `Local only` | share the printed key and UTC test time; do not infer an ACL denial |
 | Publish vanishes / sub receives nothing inside the slot | [docs/router-config.md](../../../docs/router-config.md), ACL troubleshooting ladder |
 | Doctor router check fails | run-guide Trouble: mesh up? bundle expired? (`goat profile show`) |
 | Image pull failure | `tests/check-images-public.sh` from the repo root; egress problem if it fails |
@@ -53,6 +48,6 @@ summarize a failure as "network issues".
 
 ## Rules
 
-- Distinguish "no data" from "no access": the fabric refuses silently, so an empty result
-  needs the ACL question answered before any debugging.
+- Distinguish “Not verified” from “denied”; the catalog count is aggregate slot evidence, not a
+  per-message receipt.
 - Never "fix" a denial by publishing under a different namespace; the slot is the contract.

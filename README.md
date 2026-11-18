@@ -148,15 +148,28 @@ zagros-moon-pod/
   cd zagros-moon-pod
   sudo bash moon_pod_setup.sh
   ```
-  Set `GOATNET`, `NETBIRD_MANAGEMENT_URL`, `PARTNER_NAMESPACE`, and `POD_ID` from your welcome
-  package, in the `CONFIG` block near the top of the file or as env vars, before running; then
-  pick Part 1, 2, or 3 from the menu — nothing runs until you confirm. Part 2 adds your goatnet's CA root to the
-  pod's trust store — the `<prefix>-goat-cli-ca.pem` in your bundle tarball, or a root file you name in `CA_ROOT_PEM`
-  (`goat` ships with no goatnet built in, so your bundle cannot be verified without it). It adds the root only
-  after its fingerprint matches the one the goat side gave you: you confirm it at the prompt, or set
-  `EXPECTED_CA_FINGERPRINT`. See the run guide's "Trust your goatnet's CA root". Pass `NETBIRD_SETUP_KEY` as an env var only; never write a real key into the
-  file, since the file is what gets shared and committed. Prefer the docs below if you want the full explanation
-  behind each step, or are troubleshooting a specific stage.
+  Choose **Configure inputs**; do not edit the tracked script. Setup needs `GOATNET`,
+  `NETBIRD_MANAGEMENT_URL`, the single-use `NETBIRD_SETUP_KEY`, `PARTNER_NAMESPACE` (the slot
+  ID), `POD_ID`, the signed join bundle, `CA_ROOT_PEM` (or the `.pem` in the tarball), and
+  `EXPECTED_CA_FINGERPRINT` delivered separately from the CA root. The goat side supplies those
+  values and the `goat` binary plus checksum. The partner supplies the host, Docker, and encrypted
+  state volume in Part 1. Then pick Part 1, 2, or 3 — nothing runs until you confirm.
+  Part 1 installs NetBird but never joins the mesh or spends the key. It uses a `goat` binary
+  copied beside the script, or downloads one only when the host is already on a ready mesh.
+  Part 2 validates every input before it spends the setup key. It adds your goatnet's CA root
+  to the pod's trust store, verifies the bundle in a throwaway profile, and only then joins the
+  mesh. An installed, unchanged bundle is not verified again; its installed certificate is
+  checked against the slot ID instead. The root is the `<prefix>-goat-cli-ca.pem` in your bundle
+  tarball, or a public-key file
+  named by `CA_ROOT_PEM`. `EXPECTED_CA_FINGERPRINT` is required unless the POD already trusts a
+  CA root, and must match the value the goat side supplied separately. A prompted setup key is
+  passed through a protected file on the
+  encrypted state volume, never a command argument; a supplied protected file is used directly.
+  Part 3 reports `Verified`, `Not verified`, or `Failed`. Its delivery row is `Publish failed`,
+  `Not delivered`, `Not verified`, `Local only`, or `Delivered`; it publishes through the running
+  router and never requests operator audit access. See the run
+  guide's required-input checklist. Prefer the docs below for the full explanation
+  behind each step or when troubleshooting a specific stage.
 - **Starting from bare hardware:** [`docs/pod-host-bringup.md`](docs/pod-host-bringup.md) — blank
   machine to pod-ready host (Raspberry Pi 5 worked example), then the run guide.
 - **Running a pod you were handed:** [`docs/partner-run-guide.md`](docs/partner-run-guide.md).
@@ -185,10 +198,10 @@ zagros-moon-pod/
 Working in [Claude Code](https://claude.com/claude-code)? The clone ships skills under
 `.claude/skills/` that drive the bring-up, standup, and verification docs interactively.
 
-Verification status (clean checkout, 2026-08-30): `tests/check-images-public.sh`
-ran green - every pinned pod image is anonymously pullable. The pod bring-up
-itself is unverified here; it needs the welcome package (enrollment quota,
-namespace, setup key) and a pod host.
+Verification status: CI runs the public-image guard, catalog-helper tests, setup regression,
+first-boot identity staging, stubbed setup paths, and shellcheck baselines. These tests use no
+live credentials. Real POD-token catalog evidence and full zagros acceptance remain explicitly
+open until a partner runs the live procedure in the run guide.
 
 ## Contributing
 

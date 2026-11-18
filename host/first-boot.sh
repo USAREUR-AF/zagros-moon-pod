@@ -16,6 +16,9 @@
 # the mesh is stock netbird, so the goat-clientd step is skipped gracefully when it's absent.
 set -euo pipefail
 
+SYSTEMD_UNIT_DIR="${SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+SYSTEMD_RUNTIME_DIR="${SYSTEMD_RUNTIME_DIR:-/run/systemd/system}"
+
 POD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="${1:-}"
 BUNDLE="${2:-}"
@@ -41,12 +44,15 @@ command -v goat-clientd >/dev/null 2>&1 || echo "warning: goat-clientd not on PA
 source "$PROFILE_ENV"
 # shellcheck source=host/fabric-peer-identity.sh
 source "${POD_DIR}/host/fabric-peer-identity.sh"
+# shellcheck source=host/goat-context.sh
+source "${POD_DIR}/host/goat-context.sh"
 # Test hook: production uses the shipped template; integration tests may render a temporary copy.
 : "${ZENOH_ROUTER_TEMPLATE:=${POD_DIR}/host/zenoh-router.json5.tmpl}"
 : "${POD_STATE_DIR:=/var/lib/goat-moon}"
 : "${GOAT_CLIENT_MODE:=combined}"
 : "${ZENOH_LISTEN_PORT:=7447}"
 : "${PARTNER_NAMESPACE:?PARTNER_NAMESPACE must be set in the profile}"
+: "${VERIFY_CERT_SLOT_BINDING:=0}"
 # The shipped profile carries a CHANGE-ME placeholder, which would pass the unset-check above
 # and stand the pod up publishing into a namespace the fabric silently denies. Refuse it.
 case "${PARTNER_NAMESPACE}" in
@@ -63,6 +69,10 @@ esac
 # (resolved from the bundle-derived profile.toml in step [4/6]).
 : "${ZENOH_FABRIC_ENDPOINT:=}"
 : "${ZENOH_FABRIC_CERT_CN:=}"
+case "${VERIFY_CERT_SLOT_BINDING}" in
+  0|1) ;;
+  *) echo "VERIFY_CERT_SLOT_BINDING must be 0 or 1"; exit 2;;
+esac
 
 echo "==> goat-moon-pod first-boot (profile=${PROFILE}, state=${POD_STATE_DIR})"
 echo "    WARNING: ${POD_STATE_DIR} MUST be on the partner's LUKS-encrypted volume."
@@ -78,7 +88,7 @@ chmod 700 "${POD_STATE_DIR}" "${GOAT_PROFILE_DIR}"
 # token into the profile context dir. This is steps "verify", "extract certs", and "init
 # goat-cli" folded into one.
 #
-# goat compiles in no CA root: a root is something the operator adds, once per goatnet, with
+# goat compiles in no CA root: the operator adds one, once per goatnet, with
 # `goat ca add`. The trust store FOLLOWS THE PROFILE DIR (<profile-dir>/ca-roots), and this
 # script pins the profile dir to the pod's state volume — so a root added with a plain
 # `goat ca add` lands in ~/.goat (or /root/.goat under sudo) and is never read here. The
@@ -90,15 +100,15 @@ echo "==> [1/6] goat profile init (verify bundle + extract mTLS material)"
 # (<profile-dir>/ca-roots and $GOAT_CA_ROOTS). A goat build that predates `goat ca` still
 # carries a compiled-in root; the probe fails there and init runs unchanged.
 require_ca_root() {
-  local out count
-  out="$(GOAT_PROFILE_DIR="${GOAT_PROFILE_DIR}" goat ca ls --json 2>/dev/null)" || return 0
+  local profile_dir="$1" display_dir="${2:-$1}" out count
+  out="$(GOAT_PROFILE_DIR="${profile_dir}" goat ca ls --json 2>/dev/null)" || return 0
   count="$(printf '%s' "${out}" | sed -n 's/.*"count":[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
   [ "${count:-1}" = "0" ] || return 0
   # The onboarding tarball ships the root beside the bundle as <prefix>-goat-cli-ca.pem when the
   # goat side configured it; name that file if it is here, else a placeholder.
   local root="${BUNDLE%.cbor}-ca.pem"
   [ -f "${root}" ] || root="<root.pem>"
-  echo "    no CA root is trusted under ${GOAT_PROFILE_DIR} — the bundle cannot be verified."
+  echo "    no CA root is trusted under ${display_dir} — the bundle cannot be verified."
   echo "    Your bundle is fine: verification is local and nothing was consumed. Add your"
   echo "    goatnet's root to the POD's trust store (a root added without GOAT_PROFILE_DIR lands"
   echo "    in ~/.goat, which this script does not read):"
@@ -106,35 +116,139 @@ require_ca_root() {
   echo "    check the fingerprint it prints against one the goat side gave you separately, then"
   echo "    re-run this script. Where the root comes from and how to check its fingerprint:"
   echo "    docs/partner-run-guide.md, 'Trust your goatnet's CA root'."
-  exit 3
+  return 3
 }
-# Idempotent: `goat profile init` refuses if a profile already exists (E_BUNDLE_INVALID with a
-# "use rotate" hint). On re-run with the SAME bundle, skip entirely — bundles are single-use
-# and rotating from an already-activated one churns the pod's identity (or fails on expiry)
-# for no gain. Rotate only when a genuinely new bundle is presented.
+# Resolve only the active context. Searching the whole tree can select a .bak certificate.
+active_context_dir() {
+  local root="$1" context
+  context="$(goat_active_context "$root")" || return 1
+  printf '%s/contexts/%s\n' "${root}" "${context}"
+}
+
+STAGED_PROFILE=""
+CONFIG_TMP=""
+secure_remove_dir() {
+  local directory="$1"
+  if [ -n "${directory}" ] && [ -d "${directory}" ]; then
+    find "${directory}" -type f -exec chmod u+w {} + 2>/dev/null || return 1
+    find "${directory}" \( -type f -o -type l \) -delete 2>/dev/null || return 1
+    find "${directory}" -depth -type d -empty -delete 2>/dev/null || return 1
+    [ ! -e "${directory}" ] || return 1
+  fi
+}
+staged_profile_cleanup() {
+  secure_remove_dir "${STAGED_PROFILE:-}" || return 1
+  STAGED_PROFILE=""
+}
+
+first_boot_cleanup() {
+  local original_status=$? cleanup_failed=0
+  if ! staged_profile_cleanup; then
+    echo "could not remove protected bundle pre-flight storage" >&2
+    cleanup_failed=1
+  fi
+  if [ -n "${CONFIG_TMP:-}" ] && ! rm -f "${CONFIG_TMP}"; then
+    echo "could not remove the temporary router configuration" >&2
+    cleanup_failed=1
+  fi
+  CONFIG_TMP=""
+  trap - EXIT
+  if [ "${original_status}" -eq 0 ] && [ "${cleanup_failed}" -ne 0 ]; then
+    exit 1
+  fi
+  exit "${original_status}"
+}
+trap first_boot_cleanup EXIT
+
+check_slot_binding() {
+  local cert_path="$1" cert_cn
+  if [ "${VERIFY_CERT_SLOT_BINDING}" = "1" ]; then
+    cert_cn="$(openssl x509 -in "${cert_path}" -noout -subject -nameopt RFC2253 \
+      | sed -n 's/^subject=.*CN=\([^,]*\).*$/\1/p')"
+    [ -n "${cert_cn}" ] || {
+      echo "could not read a common name from the certificate:"
+      echo "    ${cert_path}"
+      return 2
+    }
+    if [ "${cert_cn}" != "${PARTNER_NAMESPACE}" ]; then
+      echo "certificate identity does not match the configured slot ID — refusing to install"
+      echo "    certificate CN: ${cert_cn}"
+      echo "    slot ID:        ${PARTNER_NAMESPACE}"
+      echo "Use the bundle and slot ID from the same onboarding package. The live profile and services were not changed."
+      return 2
+    fi
+    echo "    certificate identity matches slot ID: ${PARTNER_NAMESPACE}"
+  else
+    echo "    certificate/slot identity binding was not checked (profile setting is off)"
+  fi
+}
+
+# Remove pre-flight profiles (they hold key copies) left by an unclean shutdown.
+for LEFTOVER_INPUT in "${POD_STATE_DIR}"/.bundle-preflight.*; do
+  if [ -d "${LEFTOVER_INPUT}" ] && ! secure_remove_dir "${LEFTOVER_INPUT}"; then
+    echo "could not remove abandoned protected input storage:" >&2
+    echo "    ${LEFTOVER_INPUT}" >&2
+    exit 2
+  fi
+done
+
+# An installed, unchanged bundle is not verified again: goat enforces the activation deadline in
+# every `goat profile init`, but the deadline bounds only first use.
 BUNDLE_SHA="$(sha256sum "${BUNDLE}" | cut -d' ' -f1)"
 BUNDLE_SHA_FILE="${GOAT_PROFILE_DIR}/.bundle.sha256"
-if ! find "${GOAT_PROFILE_DIR}" -name mtls.cert.pem -print -quit 2>/dev/null | grep -q .; then
-  require_ca_root
+LIVE_CTX_DIR="$(active_context_dir "${GOAT_PROFILE_DIR}")" || exit 2
+BUNDLE_INSTALLED=0
+if [ -f "${LIVE_CTX_DIR}/mtls.cert.pem" ] && [ -f "${BUNDLE_SHA_FILE}" ] \
+  && [ "$(cat "${BUNDLE_SHA_FILE}")" = "${BUNDLE_SHA}" ]; then
+  BUNDLE_INSTALLED=1
+fi
+
+if [ "${BUNDLE_INSTALLED}" = "1" ]; then
+  echo "    bundle already installed and unchanged — checking the installed"
+  echo "    certificate instead of re-verifying the bundle"
+  check_slot_binding "${LIVE_CTX_DIR}/mtls.cert.pem" || exit $?
+else
+  # Verify and unpack into throwaway encrypted-state storage before touching the live profile or
+  # its bundle hash. goat has no read-only bundle verifier; profile init is local-only and gives
+  # this check the same signature, lifecycle, and extraction path as the real install.
+  STAGED_PROFILE="$(mktemp -d -p "${POD_STATE_DIR}" .bundle-preflight.XXXXXX)" \
+    || { echo "could not create bundle pre-flight storage under ${POD_STATE_DIR}"; exit 2; }
+  chmod 700 "${STAGED_PROFILE}"
+  if [ -d "${GOAT_PROFILE_DIR}/ca-roots" ]; then
+    cp -a "${GOAT_PROFILE_DIR}/ca-roots" "${STAGED_PROFILE}/ca-roots"
+  fi
+  require_ca_root "${STAGED_PROFILE}" "${GOAT_PROFILE_DIR}" || exit $?
+  GOAT_PROFILE_DIR="${STAGED_PROFILE}" goat profile init "${BUNDLE}"
+  STAGED_CTX_DIR="$(active_context_dir "${STAGED_PROFILE}")" || exit 2
+  STAGED_CERT_PATH="${STAGED_CTX_DIR}/mtls.cert.pem"
+  [ -f "${STAGED_CERT_PATH}" ] \
+    || { echo "bundle pre-flight did not produce an active mtls.cert.pem"; exit 1; }
+  check_slot_binding "${STAGED_CERT_PATH}" || exit $?
+  staged_profile_cleanup
+fi
+if [ "${IDENTITY_PREFLIGHT_ONLY:-0}" = "1" ]; then
+  echo "==> identity pre-flight complete; the live profile, bundle hash, and services were not changed"
+  exit 0
+fi
+
+# Idempotent live install. This is reached only after the bundle or installed certificate and
+# optional identity binding check succeeded.
+if [ ! -f "${LIVE_CTX_DIR}/mtls.cert.pem" ]; then
+  require_ca_root "${GOAT_PROFILE_DIR}" || exit $?
   GOAT_PROFILE_DIR="${GOAT_PROFILE_DIR}" goat profile init "${BUNDLE}"
   echo "${BUNDLE_SHA}" > "${BUNDLE_SHA_FILE}"
-elif [ -f "${BUNDLE_SHA_FILE}" ] && [ "$(cat "${BUNDLE_SHA_FILE}")" = "${BUNDLE_SHA}" ]; then
+elif [ "${BUNDLE_INSTALLED}" = "1" ]; then
   echo "    profile present and bundle unchanged — skipping init/rotate (re-render only)"
 else
-  echo "    profile already present, new bundle — rotating (preserves prior at .bak/)"
-  require_ca_root
+  echo "    profile already present, verified new bundle — rotating (preserves prior at .bak/)"
+  require_ca_root "${GOAT_PROFILE_DIR}" || exit $?
   GOAT_PROFILE_DIR="${GOAT_PROFILE_DIR}" goat profile rotate "${BUNDLE}"
   echo "${BUNDLE_SHA}" > "${BUNDLE_SHA_FILE}"
 fi
-
-# Locate the extracted certs. `goat profile init` writes them under <root>/contexts/<name>/
-# (NOT the root that `goat profile path` returns). Resolve the context dir directly as the
-# directory CONTAINING mtls.cert.pem — robust to a renamed default context + to `goat profile
-# path` returning the profile root rather than the active context.
-CERT_PATH="$(find "${GOAT_PROFILE_DIR}" -name mtls.cert.pem -print -quit 2>/dev/null || true)"
-[ -n "${CERT_PATH}" ] && [ -f "${CERT_PATH}" ] \
-  || { echo "goat profile init did not produce mtls.cert.pem under ${GOAT_PROFILE_DIR}"; exit 1; }
-CTX_DIR="$(dirname "${CERT_PATH}")"
+CTX_DIR="$(active_context_dir "${GOAT_PROFILE_DIR}")" || exit 2
+CERT_PATH="${CTX_DIR}/mtls.cert.pem"
+[ -f "${CERT_PATH}" ] \
+  || { echo "goat profile install did not produce active mtls.cert.pem under ${GOAT_PROFILE_DIR}"; exit 1; }
 
 # --- [2/6] Lay the pod's Zenoh mTLS material from the goat-cli-extracted certs -------------------
 echo "==> [2/6] laying Zenoh mTLS certs from the goat-cli profile"
@@ -173,7 +287,7 @@ elif
   GOAT_CLIENT_MODE="${GOAT_CLIENT_MODE}" POD_STATE_DIR="${POD_STATE_DIR}" \
     envsubst '${GOAT_CLIENT_MODE} ${POD_STATE_DIR}' \
     < "${POD_DIR}/host/goat-clientd.service.example" \
-    > /etc/systemd/system/goat-clientd.service &&
+    > "${SYSTEMD_UNIT_DIR}/goat-clientd.service" &&
   systemctl daemon-reload &&
   systemctl enable --now goat-clientd
 then
@@ -191,7 +305,7 @@ fi
 # there so the pod follows the bundle, never a stale profile constant. The ZENOH_FABRIC_ENDPOINT
 # profile var is a fallback only (hand-driven validation, or a bundle that omitted the field).
 echo "==> [4/6] verifying fabric peer and rendering Zenoh router config"
-PROFILE_TOML="$(find "${GOAT_PROFILE_DIR}" -name profile.toml -print -quit 2>/dev/null || true)"
+PROFILE_TOML="${CTX_DIR}/profile.toml"
 BUNDLE_ROUTER=""
 if [ -n "${PROFILE_TOML}" ] && [ -f "${PROFILE_TOML}" ]; then
   BUNDLE_ROUTER="$(sed -n 's/^[[:space:]]*router_endpoint[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${PROFILE_TOML}" | head -1)"
@@ -284,8 +398,6 @@ if [ -f "${CONFIG_OUT}" ] && [ -n "${APPLIED_CONFIG_SHA}" ] && \
 fi
 
 CONFIG_TMP="$(mktemp "${CONFIG_OUT}.tmp.XXXXXX")"
-cleanup_config_tmp() { [ -z "${CONFIG_TMP:-}" ] || rm -f "${CONFIG_TMP}"; }
-trap cleanup_config_tmp EXIT
 envsubst \
   '${ZENOH_LISTEN_PORT} ${POD_ROUTER_ZID} ${ZENOH_FABRIC_ENDPOINT} ${PARTNER_NAMESPACE} ${INBOUND_NAMESPACE} ${POD_CERT_CN} ${FABRIC_ROUTER_CERT_CN} ${POD_CERT_PEM} ${POD_KEY_PEM} ${CA_ROOTS_PEM}' \
   < "${ZENOH_ROUTER_TEMPLATE}" \
@@ -491,7 +603,7 @@ record_applied_fabric_cn "${FABRIC_CN_APPLIED_FILE}" "${FABRIC_ROUTER_CERT_CN}"
 record_applied_config "${CONFIG_SHA}"
 ( cd "${POD_DIR}/compose" && docker compose up -d )
 echo "    audit sink metrics:"
-echo "      curl -s http://127.0.0.1:9303/metrics | grep ^goat_audit_"
+echo "      curl -s --max-time 5 http://127.0.0.1:9303/metrics | grep ^goat_audit_"
 
 # --- [6/6] Install the host goat-doctor probe timer (goat-cli, no container) ---------------------
 # goat presence was hard-checked at the top of the script. systemd is NOT guaranteed: a
@@ -499,7 +611,7 @@ echo "      curl -s http://127.0.0.1:9303/metrics | grep ^goat_audit_"
 # systemd), and dying here under `set -e` would exit non-zero with the data plane already up.
 # Guard like step [3/6]: detect, skip loudly, leave the manual path on screen.
 echo "==> [6/6] installing goat-doctor host timer"
-if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+if ! command -v systemctl >/dev/null 2>&1 || [ ! -d "${SYSTEMD_RUNTIME_DIR}" ]; then
   echo "    skipped (no running systemd on this host). The data plane is up; run the health"
   echo "    probe manually or from your own scheduler:"
   echo "      GOAT_PROFILE_DIR=${GOAT_PROFILE_DIR} ${POD_DIR}/host/goat-doctor.sh"
@@ -509,8 +621,10 @@ else
   # POD_STATE_DIR; no hardcoded paths).
   GOAT_PROFILE_DIR="${GOAT_PROFILE_DIR}" POD_STATE_DIR="${POD_STATE_DIR}" DOCTOR_SH="${DOCTOR_SH}" \
     envsubst '${GOAT_PROFILE_DIR} ${POD_STATE_DIR} ${DOCTOR_SH}' \
-    < "${POD_DIR}/host/goat-doctor.service.example" > /etc/systemd/system/goat-doctor.service
-  cp "${POD_DIR}/host/goat-doctor.timer.example" /etc/systemd/system/goat-doctor.timer
+    < "${POD_DIR}/host/goat-doctor.service.example" \
+    > "${SYSTEMD_UNIT_DIR}/goat-doctor.service"
+  cp "${POD_DIR}/host/goat-doctor.timer.example" \
+    "${SYSTEMD_UNIT_DIR}/goat-doctor.timer"
   systemctl daemon-reload
   systemctl enable --now goat-doctor.timer
   echo "    goat-doctor.timer enabled"

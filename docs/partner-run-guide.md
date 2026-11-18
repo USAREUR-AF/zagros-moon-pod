@@ -1,18 +1,27 @@
 # Partner run guide — stand up the pod you were handed
 
 Turnkey, idempotent path to bring a moon-pod up against the zagros fabric and verify it. You run
-this on **your own host**. Everything environment-specific (which fabric, your identity, your
-namespace) is carried in the **signed join bundle** you were given at onboarding — the only
-value you copy by hand is your slot id (`PARTNER_NAMESPACE`) in
-[Fill your profile](#fill-your-profile).
+this on **your own host**. Use `sudo bash moon_pod_setup.sh`; its **Configure inputs** menu
+collects the onboarding values without changing a tracked file and reads the single-use key
+without echoing it.
 
 ## What you receive at onboarding
 
-1. A **signed join bundle** (`<your-handle>.cbor`) — carries your mesh setup-key, your fabric
-   router endpoint, your mTLS identity (your zagros slot), and the CA roots your router trusts
-   for fabric TLS. It is the single source of truth; the pod reads everything from it.
-2. The **`goat` CLI binary** for your platform (linux-amd64 / linux-arm64).
-3. **A clone of this repository.**
+| Input | Supplied by | Single-use |
+|---|---|---|
+| `GOATNET` | Goat side, in the welcome package | No |
+| `NETBIRD_MANAGEMENT_URL` | Goat side, in the welcome package | No |
+| `NETBIRD_SETUP_KEY` | Goat side, in the welcome package | Yes |
+| `PARTNER_NAMESPACE` (the slot ID) | Goat side, in the welcome package | No |
+| `POD_ID` | Goat side, in the welcome package | No |
+| Signed join bundle (tarball or `.cbor`) | Goat side | No |
+| CA root (`CA_ROOT_PEM`, or the `.pem` in the bundle tarball) | Goat side | No |
+| `EXPECTED_CA_FINGERPRINT` | Goat side, through a different channel from the CA root | No |
+| `goat` binary and its `.sha256` file | Goat side | No |
+| Host, Docker, encrypted state volume | Partner, prepared in Part 1 | No |
+
+`POD_ID` is the host name NetBird registers for this POD: 1-59 lowercase letters, digits, or
+hyphens, starting and ending with a letter or digit.
 
 The bundle exists because a machine was enrolled: your organisation's custodian runs
 `goat machine enroll <handle> --node-class <class>` against the enrollment quota the goat side
@@ -47,45 +56,67 @@ blank machine (Raspberry Pi 5 worked example included) to every box below checke
   the production path uses `goat-clientd` and first-boot drives it for you.
 - The **`goat`** binary on `PATH`, and `envsubst` (from `gettext`).
 - **OpenSSL**, used by first-boot to verify and identify the fabric router before rendering its ACL.
-- Your goatnet's **CA root** (a public-key `.pem` — usually already in your bundle tarball) and
+- Your goatnet's **CA root** (a `.pem`, usually in your onboarding tarball) and
   a fingerprint, from the goat side, to check it against.
   `goat` ships with no goatnet built in and cannot verify your bundle without it — see
   [Trust your goatnet's CA root](#trust-your-goatnets-ca-root).
 
-## Fill your profile
+## Fill your profile (manual path)
 
-The bundle carries your identity and endpoints, but one profile field anchors the pod to your
-**slot** (the per-uuid namespace minted at enrollment), and the shipped profile carries it as a
-`CHANGE-ME` placeholder. Fill it in a **local copy** — the copy is gitignored, so your slot id
-never lands in a commit:
+The bundle carries your identity and endpoints, but the local profile anchors the pod to your
+**slot ID** (the per-uuid namespace minted at enrollment) and enables zagros's documented
+certificate/slot binding. The shipped profile carries the slot as a `CHANGE-ME` placeholder.
+Fill it in a **local copy** — the copy is gitignored, so your slot ID never lands in a commit:
 
 ```
 cp -r profiles/zagros profiles/zagros-local
 $EDITOR profiles/zagros-local/profile.env
-#   PARTNER_NAMESPACE=<your slot id>     # your write namespace (first-boot fails loud without it)
+#   PARTNER_NAMESPACE=<your slot ID>  # compatibility variable; first-boot fails loud without it
+#   VERIFY_CERT_SLOT_BINDING=1              # add this when upgrading an older zagros-local copy
 ```
 
-The value is the slot id from your onboarding response; your cert's CN already carries the same
-slot and arrives in the bundle, so there is nothing else to copy. `first-boot.sh` refuses to run
+The value is the slot ID from your onboarding response; your cert's CN already carries the same
+value and arrives in the bundle, so there is nothing else to copy. `first-boot.sh` refuses to run
 with `PARTNER_NAMESPACE` unset, so a forgotten fill fails immediately rather than half-standing
 the pod up.
 
 ## Bring-up
 
-```
-# 1. Join the mesh with the setup-key from your bundle (zagros sandbox path). The setup-key is
-#    single-use — run this once, after the prerequisites and profile are in place:
-sudo netbird up --management-url <mgmt-url-from-onboarding> --setup-key <setup-key-from-onboarding>
+The supported setup path is:
 
-# 2. Tell goat which CA signs bundles for your goatnet: add its root to the POD's trust store
-#    (once per goatnet; see "Trust your goatnet's CA root" below for where the file comes from).
+```sh
+cd zagros-moon-pod
+sudo bash moon_pod_setup.sh
+# c: Configure inputs; 1: prepare host; 2: stand up; 3: verify
+```
+
+Part 1 never joins the mesh. **Configure inputs** reads the key without echo. Part 2 validates
+the bundle location, slot, POD ID, CA root, fingerprint, and
+certificate binding before it spends that key. If the key was entered at the prompt, it passes
+through a mode-0600 file on the encrypted state volume, never a command argument. A protected
+`NETBIRD_SETUP_KEY_FILE` is passed directly and is not copied or rewritten.
+
+For a manual stand-up, put the key in a protected temporary file and use the same ordering:
+
+```
+# 1. Tell goat which key signs bundles for your goatnet, and verify its fingerprint first.
+#    (once per goatnet; see "Trust your goatnet's CA root" below).
 #    GOAT_PROFILE_DIR is load-bearing — without it the root lands where first-boot never looks.
 sudo GOAT_PROFILE_DIR=/var/lib/goat-moon/goat-cli goat ca add <ca-id>.pem
 
-# 3. Run first-boot with your filled profile + your bundle. This verifies the bundle, extracts your
+# 2. Join only after every other input validates. The key never appears in ps or shell history.
+sudo install -m 600 /dev/null /run/netbird-setup-key
+read -rs key; printf %s "$key" | sudo tee /run/netbird-setup-key >/dev/null; unset key
+sudo netbird up --management-url <mgmt-url-from-onboarding> --setup-key-file /run/netbird-setup-key
+sudo sh -c ': > /run/netbird-setup-key; unlink /run/netbird-setup-key'
+
+# 3. Require exact management connectivity and a non-zero connected-peer count.
+sudo netbird status
+
+# 4. Run first-boot with your filled profile + your bundle. This verifies the bundle, extracts your
 #    mTLS identity, renders the Zenoh router config from the BUNDLE's router endpoint, and starts
 #    the data plane. Re-runnable.
-sudo ./host/first-boot.sh zagros-local /path/to/<your-handle>.cbor
+sudo ./host/first-boot.sh zagros-local /path/to/<handle>.cbor
 ```
 
 first-boot prints six numbered steps, in order: [1/6] verify the bundle + extract certs
@@ -148,9 +179,10 @@ A different certificate signed by the same CA may complete TLS, but its operatio
 denied; applications must use the certificate and key extracted from this POD's bundle.
 
 To confirm fabric arrival, note your slot's `publish_count` in the portal catalog, publish one
-uniquely named message through the **running local router** (`tls/127.0.0.1:7447`) using your normal
-application or one of the clients in [`../clients/`](../clients/README.md), then refresh for up to
-three minutes. The slot-level count must rise. Also confirm the local audit metric rises:
+message to a fixed test key through the **running local router** (`tls/127.0.0.1:7447`) using your
+normal application or one of the clients in [`../clients/`](../clients/README.md), then refresh
+for up to three minutes. Put a unique nonce in the payload, not the key. The slot-level count must
+rise. Also confirm the local audit metric rises:
 
 ```bash
 curl -fsS http://127.0.0.1:9303/metrics | grep '^goat_audit_samples_total'
@@ -171,29 +203,25 @@ different CNs is not supported by this CN-bound ACL.
 ### Trust your goatnet's CA root
 
 `goat` ships with **no goatnet built in**. Before it accepts a signed bundle it has to be told
-which certificate authority signs bundles for your goatnet: you add that CA's **root** (a public
-key, a small `.pem` file) once, and first-boot verifies your bundle against it. The CA roots
-*inside* the bundle are a different thing — they are what your router trusts for fabric TLS,
-and they cannot vouch for the bundle that carries them.
+which certificate authority signs bundles for your goatnet: you add its **CA root** (a small
+`.pem`) once, and first-boot verifies your bundle against it. The CA roots inside the signed
+bundle are different: the router uses them for fabric TLS, and they cannot vouch for the bundle
+that carries them.
 
-**Get the root.** Two places, in this order:
+**Get the CA root.** Two places, in this order:
 
 1. **Your onboarding tarball**, when the goat side configured it: `<prefix>-goat-cli-ca.pem`,
    next to the `<prefix>-goat-cli.cbor` it verifies. `moon_pod_setup.sh` unpacks the tarball for
    you and uses this file when `CA_ROOT_PEM` is unset, once you have confirmed its fingerprint
    (below). Check with
    `tar tzf <pod-id>-bundle.tar.gz | grep -- -goat-cli-ca.pem`.
-2. **Your goatnet's download surface**, the same place the `goat` binary comes from, when the
-   tarball has no such file (or to add a further goatnet later). It is mesh-only, so fetch it
-   after step 1, or on your already-onboarded workstation and copy it over with the binary:
+2. **An already-enrolled workstation**, when the tarball has no such file. Copy the trusted
+   CA root from that workstation along with the binary, or ask the goat side
+   to send the root file. Do not join this POD to the mesh first merely to fetch trust:
+   bundle verification intentionally precedes the single-use mesh join.
 
-```
-https://get.<goatnet>/ca-roots/
-```
-
-The page lists each root with its CA-ID and fingerprint. Take the one your bundle is signed by:
-the goat side can tell you which, and first-boot names it when it is missing (`This bundle is
-signed by <ca-id>`).
+Take the root for the CA-ID that signs this bundle. The goat side can name it, and first-boot
+names it when missing (`This bundle is signed by <ca-id>`).
 
 **Add it to the pod's trust store:**
 
@@ -210,15 +238,12 @@ variable after `sudo`, as written: `sudo` drops variables set in front of it.
 
 **Check the fingerprint.** `goat ca add` prints it. Compare it with one the goat side gave you
 through a separate channel — not the tarball or page you took the file from — before you go on.
-A root and a bundle from the same tarball agree with each other by construction, so the
+A CA root and a bundle from the same tarball agree with each other by construction, so the
 comparison is the only check that the pair is genuine. The
-root is a public key, so secrecy is not the point; that it is the *right* key is, and anyone
-who can hand you a file can hand you a root.
+file is public, so secrecy is not the point; that it is the *right* root is, and anyone
+who can hand you a file can hand you a substitute root.
 
-`moon_pod_setup.sh` makes this check before it adds anything: step 2.5 reads the root's
-fingerprint and trusts the root only when you type `yes` to it, or when it equals
-`EXPECTED_CA_FINGERPRINT` (the `SHA256:<hex>` value the goat side gave you). Without a terminal
-to answer on and without `EXPECTED_CA_FINGERPRINT`, it stops. To see what the pod trusts at any time:
+`moon_pod_setup.sh` requires `EXPECTED_CA_FINGERPRINT` unless the POD already trusts a CA root. Before it adds anything, Part 2 reads the root's fingerprint and requires it to equal the `SHA256:<hex>` value the goat side supplied through the separate channel. To see what the pod trusts at any time:
 
 ```
 sudo GOAT_PROFILE_DIR=/var/lib/goat-moon/goat-cli goat ca ls
@@ -230,29 +255,40 @@ second goatnet is a second `goat ca add`, not a new `goat` binary.
 ## Verify
 
 ```
-# Health — expect the cert/router checks green:
-sudo GOAT_PROFILE_DIR=/var/lib/goat-moon/goat-cli goat doctor --all
-
-# Containers up:
-sudo docker ps    # goat-moon-zenoh-router (audit-sink only if you opted into the audit profile)
-
-# Local observation — record the value before and after the running-router delivery check:
-curl -fsS http://127.0.0.1:9303/metrics | grep '^goat_audit_samples_total'
+cd zagros-moon-pod
+sudo bash moon_pod_setup.sh   # choose Part 3
 ```
 
-For the delivery verdict, use the single running-router procedure in
-[Upgrade an existing pod for fabric forwarding](#upgrade-an-existing-pod-for-fabric-forwarding):
-publish with the normal local application/client path, observe the local metric, and require the
-slot catalog count to rise within three minutes. Never stop the router for this check; a direct
-host-side `goat pub` would compete for the identity or bypass the router rules under test.
+Part 3 baselines the local audit count and the slot's catalog `publish_count`, publishes one
+message with a unique nonce to `<slot>/test/ping` through `tls/127.0.0.1:7447`, and waits up to
+three minutes. Its delivery row reports the first applicable outcome:
 
-The current `moon_pod_setup.sh` Part 3 round-trip still stops the router and uses the older direct
-fabric path. That check does not exercise these router rules and is not the delivery verdict above;
-the separate setup-verdict change tracked in
-[USAREUR-AF/zagros-moon-pod#6](https://github.com/USAREUR-AF/zagros-moon-pod/issues/6)
-will replace it. If Part 3 is run in the meantime, it restarts the router before returning.
+| Outcome | Meaning |
+|---|---|
+| **Publish failed** | The local publish returned an error. This is a failure. |
+| **Not delivered** | The readable local audit count did not rise. This is a failure even if the slot-wide catalog count rose. |
+| **Not verified** | A required count could not be read, including a stopped audit sink or a refused, throttled, timed-out, or unreachable catalog. This is neither pass nor fail; follow the printed next step. |
+| **Local only** | The local count rose but the slot-wide catalog count did not. This is a failure; send the printed key and UTC time to the goat side. |
+| **Delivered** | Both counts rose. This passes, but the slot-wide count cannot prove which message caused the rise. |
 
-Your slot is the namespace your cert is bound to (the `PARTNER_NAMESPACE` first-boot reported). A
+The overall result is **Verified** only when every local check passes and delivery is
+**Delivered**; **Not verified** when nothing failed but evidence could not be read; otherwise it
+is **Failed**. Restart acceptance is outside Part 3 and requires a deliberate reboot.
+
+Part 3 never stops or starts the router. A passing publish proves local delivery and that the fabric
+recorded a publish under the slot; it does not prove bilateral inbound delivery, topic
+declaration, durable audit retention, or that one particular payload produced the count rise.
+
+### Live catalog check (partner-run; do not record secrets)
+
+On an enrolled Linux POD, run Part 3 with the real POD profile and token. Record only the UTC
+publish-start time, baseline and final `publish_count`, baseline and final `last_publish_at`, HTTP
+status/cause if not verified, and the verdict rows. Never copy `portal.token`, request
+headers, setup keys, bundle contents, or operator credentials into the record. A stub or CI run
+is not live verification.
+
+Your slot ID is the namespace your cert is bound to (the compatibility variable
+`PARTNER_NAMESPACE` in the generated local profile). A
 publish **outside** your slot is silently denied — that is expected; publish only within it.
 
 The `sudo` in every command above is load-bearing: first-boot roots the state dir, so goat
@@ -304,7 +340,7 @@ today — declare anyway; the contract requires it and production enforces it.
 
 - **first-boot stops at [1/6] with "no CA root is trusted", "This machine trusts no CA roots",
   or "this machine does not trust that CA":** the pod's trust store is missing your goatnet's
-  root — see [Trust your goatnet's CA root](#trust-your-goatnets-ca-root). Your bundle is fine:
+  CA root — see [Trust your goatnet's CA root](#trust-your-goatnets-ca-root). Your bundle is fine:
   verification is local and nothing was consumed, so do **not** ask for a fresh one. The usual
   cause is a root added without `GOAT_PROFILE_DIR`, which lands in `~/.goat` instead of the
   pod's state volume; the second is the root of a different goatnet than the one that signed
@@ -315,8 +351,9 @@ today — declare anyway; the contract requires it and production enforces it.
   `goat_audit_subscriber_session_state 1` means it is subscribed, and `goat_audit_samples_total`
   counts what it has seen. If it logs `Permission denied` while opening its session, it cannot
   read the TLS files: re-run first-boot, which lays them as `root:65532`, mode `0640`. The data
-  plane does not depend on the sink.
-- **`goat doctor` router check fails:** confirm the mesh is up (`netbird status` → Connected) and
+  plane does not depend on the sink, but local acceptance does.
+- **`goat doctor` router check fails:** confirm `netbird status` reports exactly
+  `Management: Connected` and a connected-peer count greater than zero, and
   that the bundle hasn't expired (`goat profile show`). The router endpoint the pod uses comes
   from the bundle, so a stale bundle points at the wrong place — get a fresh one.
 - **first-boot says `fabric router certificate name changed`:** the running router and applied

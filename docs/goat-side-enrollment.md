@@ -64,15 +64,33 @@ as a secret in transit. Fetch the bundle tarball and deliver it to the pod host
 out-of-band; a lapsed setup key is re-minted quota-neutrally with
 `goat machine mesh-key <handle>` (no re-enroll).
 
-The partner's `goat` trusts no CA until they add your goatnet's root, and `first-boot.sh`
-cannot verify the bundle without it. The bundle tarball carries the root as
-`<prefix>-goat-cli-ca.pem` only when the portal that built it is set up to ship the bundle-signing
-CA's public key; confirm your tarball has it, or tell the partner to take the root from
-`get.<goatnet>/ca-roots/`. With the package, tell them which CA-ID signs their bundle
-and give them that root's fingerprint (`goat ca ls` on a machine that already trusts it)
-through a channel other than the one that serves the root file — the fingerprint is the check,
-so it must not arrive by the same road as the thing it checks. `moon_pod_setup.sh` will not add
-the root until the partner confirms that fingerprint or passes it as `EXPECTED_CA_FINGERPRINT`.
+The complete handover contains:
+
+| Input | Supplied by | Single-use |
+|---|---|---|
+| `GOATNET` | Goat side, in the welcome package | No |
+| `NETBIRD_MANAGEMENT_URL` | Goat side, in the welcome package | No |
+| `NETBIRD_SETUP_KEY` | Goat side, in the welcome package | Yes |
+| `PARTNER_NAMESPACE` (the slot ID) | Goat side, in the welcome package | No |
+| `POD_ID` | Goat side, in the welcome package | No |
+| Signed join bundle (tarball or `.cbor`) | Goat side | No |
+| CA root (`CA_ROOT_PEM`, or the `.pem` in the bundle tarball) | Goat side | No |
+| `EXPECTED_CA_FINGERPRINT` | Goat side, through a different channel from the CA root | No |
+| `goat` binary and its `.sha256` file | Goat side | No |
+| Host, Docker, encrypted state volume | Partner, prepared in Part 1 | No |
+
+`POD_ID` is the host name NetBird registers for this POD: 1-59 lowercase letters, digits, or
+hyphens, starting and ending with a letter or digit.
+
+The partner's `goat` trusts no CA root until they add the goatnet's root, and `first-boot.sh`
+cannot verify the bundle without it. The onboarding tarball carries it as
+`<prefix>-goat-cli-ca.pem` only when the portal that built it is set up to ship the root;
+confirm the tarball has it, or copy it from an enrolled workstation into the package.
+Tell the partner which CA-ID signs the bundle and provide that root's fingerprint through a
+channel other than the one that carries the root. `moon_pod_setup.sh` requires
+`EXPECTED_CA_FINGERPRINT` unless the POD already trusts a CA root and refuses a mismatch.
+Deliver the host-architecture `goat` binary with its matching `.sha256` file; Part 1 refuses
+an unverified binary.
 
 ## Operator authorization
 
