@@ -13,6 +13,15 @@ Two parts:
 
 If your host already runs Linux and you administer it comfortably, skip the worked example.
 
+## Reference host OS
+
+The tested target is **Ubuntu 24.04 LTS** Server on arm64 or amd64. DISA has published a
+[STIG for Ubuntu 24.04 LTS](https://ncp.nist.gov/checklist/1274), while Canonical's
+[release-cycle page](https://ubuntu.com/about/release-cycle) shows no STIG for 26.04 yet.
+A stock install is not STIG-compliant: applying that hardening, for example with Ubuntu
+Security Guide and Ubuntu Pro, is the site's responsibility. Setup has been tested on stock
+24.04, not on a STIG-hardened host. Other Linux hosts may work but are not the tested target.
+
 ## What "pod-ready" means
 
 The run guide assumes all of this. Each row has a check that must pass:
@@ -23,15 +32,17 @@ The run guide assumes all of this. Each row has a check that must pass:
 | Docker Engine + compose plugin | `docker compose version` prints a version |
 | `envsubst` | `envsubst --version` prints a version |
 | OpenSSL | `openssl version` prints a version |
+| Python 3.9 or newer | `python3 -c 'import sys; assert sys.version_info >= (3, 9)'` |
 | `goat` binary on `PATH` | `goat --version` prints a version |
-| Your goatnet's CA root file on the host | `ls <ca-id>.pem`, or `<prefix>-goat-cli-ca.pem` inside your bundle tarball (else fetch after the mesh join, like the goat binary) |
+| Your goatnet's CA root on the host | `ls <ca-id>.pem`, or `<prefix>-goat-cli-ca.pem` inside your onboarding tarball; copy it from an enrolled workstation rather than spending the mesh key early |
 | Mesh client installed | `netbird version` prints a version (zagros sandbox path) |
-| LUKS-backed state volume | `findmnt -n /var/lib/goat-moon` shows a `/dev/mapper/...` source |
+| NetBird setup-key file support | `netbird up --help \| grep -- --setup-key-file` prints the option |
+| LUKS-backed state volume | `findmnt -n -o SOURCE /var/lib/goat-moon` prints `/dev/mapper/goat-moon` |
 | This repo cloned on the host | `ls host/first-boot.sh` from the clone root |
 | Outbound reach for image pulls | `tests/check-images-public.sh` passes |
 
-The hostname should be the handle you were assigned at onboarding (the name on your
-`<handle>.cbor`), so the machine on the wire matches the record of the machine that enrolled.
+The hostname should be the POD ID assigned at onboarding (the name on your
+`<POD-label>.cbor`), so the machine on the wire matches the enrolled machine record.
 
 ## Part 1 — any Linux host
 
@@ -66,18 +77,19 @@ Stock NetBird, from the official installer:
 ```sh
 curl -fsSL https://pkgs.netbird.io/install.sh | sudo sh
 netbird version
+netbird up --help | grep -- --setup-key-file
 ```
 
-Install only. Do **not** run `netbird up` yet: the setup key from your bundle is single-use, and
-the run guide tells you when to spend it.
+Install only. Do **not** run `netbird up` yet: the setup key from your bundle is single-use.
+Part 2 checks the complete package, CA root and separately delivered fingerprint before it spends
+the key. The fingerprint is required unless the POD already trusts a CA root. A ready mesh
+requires both the exact `Management: Connected` state and at least one
+connected peer; `Peers count: 0/... Connected` is not ready.
 
-**Reusing hardware that already has a NetBird identity?** `moon_pod_setup.sh`'s mesh-join step
-only checks whether *any* peers are currently connected, not which identity they belong to - a
-box already enrolled on this or another goatnet (a prior role, a different pod, an old test)
-will report itself as "already joined" and silently skip spending your new setup key, leaving
-the host on its **old** identity with the **old** mesh groups. There is no error; `netbird
-status` just keeps showing the old FQDN. Confirm which identity is actually active before
-trusting a "joined" result:
+**Reusing hardware that already has a NetBird identity?** `moon_pod_setup.sh` does not determine
+whether an enrolled identity belongs to this POD. A box already enrolled on this or another
+goatnet may keep its old identity and groups. Confirm which identity is active before trusting an
+"already joined" result:
 
 ```sh
 netbird status | grep -E 'FQDN|NetBird IP'
@@ -142,28 +154,9 @@ sudo install -m 755 goat-linux-arm64 /usr/local/bin/goat
 goat --version
 ```
 
-Alternatively, defer this whole step: the run guide's step 1 joins the pod host to the mesh,
-and the fetch works from the pod host itself after that. If you script this part, either fetch
-on the workstation or order the goat fetch **after** the mesh join — never between NetBird
-install and `netbird up`.
-
-Ordering after the join is necessary but not sufficient: `netbird up` returns when the
-management connection is up, and mesh DNS applies asynchronously a few seconds later. A fetch
-issued straight after `netbird up` still races DNS and falls through to the LAN resolver. And
-"does the name resolve" is not a valid readiness gate — a wildcard LAN resolver answers with a
-local address and the gate passes on the wrong answer. Ask the tool that knows: `netbird
-status` reports its nameservers as Available once mesh DNS is actually applied. Wait on that,
-then assert the name resolves to a **mesh address** — NetBird assigns from the CGNAT block
-100.64.0.0/10 (100.64.0.0 through 100.127.255.255, not just 100.64.x.x):
-
-```sh
-for _ in $(seq 1 30); do
-  netbird status | grep -Eq 'Nameservers: [1-9][0-9]*/[1-9][0-9]* Available' && break
-  sleep 1
-done
-getent hosts "get.<goatnet>" | grep -Eq '^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.' \
-  || { echo "mesh DNS not serving get.<goatnet>" >&2; exit 1; }
-```
+Do not defer trust or the binary by joining the POD first. Part 2 deliberately verifies the
+bundle before spending the mesh key. If no enrolled workstation can copy these files, request
+them from the goat side.
 
 The download keeps the arch-suffixed name until it lands on `PATH`: the `.sha256` file names
 `goat-linux-arm64`, so `sha256sum -c` looks for that exact filename in the working directory.
@@ -171,9 +164,10 @@ The download keeps the arch-suffixed name until it lands on `PATH`: the `.sha256
 ### Your goatnet's CA root
 
 `goat` ships with no goatnet built in: it verifies your bundle only against a CA root you add
-yourself. Check your bundle tarball first: it carries the root as `<prefix>-goat-cli-ca.pem`
+yourself. Check your bundle tarball first: it carries the root as
+`<prefix>-goat-cli-ca.pem`
 beside the `.cbor` when the goat side configured it, and then there is nothing to fetch. If it
-does not, the root is a public-key `.pem` served next to the binary, at `$BASE/ca-roots/` — a
+does not, the root is a public `.pem` served next to the binary, at `$BASE/ca-roots/` — a
 page listing each root with its CA-ID and fingerprint. Fetch the one for your goatnet in the
 same trip as the binary (it is mesh-only for the same reason) and copy it to the pod host:
 
@@ -186,7 +180,7 @@ scp <ca-id>.pem <user>@<pod-host>:
 Only fetch it here. Adding it to the pod's trust store happens in the run guide
 ([Trust your goatnet's CA root](partner-run-guide.md#trust-your-goatnets-ca-root)), because the
 trust store lives on the state volume and the command has to name it — a plain `goat ca add`
-puts the root where `first-boot.sh` never looks.
+puts the key where `first-boot.sh` never looks.
 
 ### This repo
 
@@ -319,7 +313,8 @@ traffic to allow.
 
 ## Part 2 — worked example: Raspberry Pi 5
 
-Built against: Raspberry Pi 5, booting Ubuntu Server 24.04 preinstalled arm64
+Built against the reference host OS: Raspberry Pi 5, booting Ubuntu Server 24.04 LTS
+preinstalled arm64
 (`ubuntu-24.04.x-preinstalled-server-arm64+raspi.img.xz`), from either an SD card or an NVMe
 drive on a HAT. The pod's images ship arm64 builds, so nothing else changes.
 
@@ -389,7 +384,7 @@ The shape that works:
 
 ```yaml
 #cloud-config
-hostname: <your-handle>          # the handle from your onboarding
+hostname: <POD-label>            # the POD ID from your onboarding
 manage_etc_hosts: true
 
 ssh_pwauth: false

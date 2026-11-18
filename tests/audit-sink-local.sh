@@ -138,7 +138,7 @@ EOF
 chmod +x "$STUBS"/*
 
 # --- 3. A filled local profile, then first-boot as a partner runs it ---------------------------------
-mkdir -p "${POD_DIR}/profiles/${PROFILE_NAME}"
+mkdir -p "${POD_DIR}/profiles/${PROFILE_NAME}" "$STATE"
 sed -e "s|^PARTNER_NAMESPACE=.*|PARTNER_NAMESPACE=${SLOT}|" "${POD_DIR}/profiles/zagros/profile.env" \
   > "${POD_DIR}/profiles/${PROFILE_NAME}/profile.env"
 printf 'POD_STATE_DIR=%s\nPOD_ID=ci-pod\nZENOH_FABRIC_CERT_CN=\n' "$STATE" \

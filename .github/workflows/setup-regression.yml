@@ -1,0 +1,36 @@
+name: setup-regression
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+      - name: Catalog helper tests on Python 3.9
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work \
+            python:3.9-slim@sha256:2d97f6910b16bd338d3060f261f53f144965f755599aab1acda1e13cf1731b1b \
+            python3 tests/test-catalog-publish-count.py
+      - name: Setup regression tests
+        run: bash tests/setup-helpers-local.sh
+      - name: First-boot identity tests
+        run: bash tests/first-boot-identity-local.sh
+      - name: Stubbed setup end-to-end tests
+        run: TERM=dumb COLUMNS=80 bash tests/setup-flow-local.sh
+      - name: Shellcheck touched scripts
+        run: |
+          shellcheck -x tests/setup-helpers-local.sh tests/setup-flow-local.sh tests/first-boot-identity-local.sh
+          shellcheck -x host/goat-context.sh host/secure-remove.sh
+          test "$(shellcheck -x moon_pod_setup.sh 2>&1 | grep -c '^In moon_pod_setup.sh')" -le 26
+          test "$(shellcheck -x host/first-boot.sh 2>&1 | grep -c '^In host/first-boot.sh')" -le 3

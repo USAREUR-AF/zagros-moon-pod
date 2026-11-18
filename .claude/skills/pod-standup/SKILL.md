@@ -17,10 +17,14 @@ the one non-repeatable step.
    failure: switch to `pod-host-bringup` first.
 2. The bundle file exists, and lives OUTSIDE the repo clone (`.gitignore` blocks `*.cbor`, but
    do not rely on it).
-3. The user has their onboarding response at hand: slot id, mesh management URL, setup key.
+3. Every row in the run guide's required-input checklist is present: POD ID, slot ID,
+   goatnet, mesh management URL, a setup key unless this host is already enrolled, bundle,
+   `goat` binary and `.sha256`,
+   CA root, and its separately delivered fingerprint. The fingerprint is required unless the
+   POD already trusts a CA root.
 
 If item 2 or 3 fails, the goat side has not finished its part and this host is hard-blocked:
-no seeded enrolment grant means no bundle, and without the bundle and slot id nothing below
+no seeded enrolment grant means no bundle, and without the bundle and slot ID nothing below
 can start. There is no local workaround, and a refused or silent enrolment state is the rail
 working. Stop, have the user contact the goat side, and resume only when the package arrives.
 
@@ -33,19 +37,30 @@ in this flow is re-runnable; this is the step to be slow on.
 
 ## Sequence
 
-1. Profile fill, per the doc's "Fill your profile": `cp -r profiles/zagros profiles/zagros-local`,
-   set `PARTNER_NAMESPACE` to the slot id. Confirm `git status` shows the
-   copy as ignored.
-2. Mesh join (the single-use step above). Verify: `netbird status` shows Connected.
-3. Trust the goatnet's CA root, per the doc's "Trust your goatnet's CA root" (use the tarball's
-   `<prefix>-goat-cli-ca.pem` if it has one, else the goatnet's `get.` page):
+1. Prefer `sudo bash moon_pod_setup.sh` → **Configure inputs**; it fills the ignored local
+   profile without editing a tracked file. In the manual path, set the profile compatibility
+   variable `PARTNER_NAMESPACE` to the slot ID and confirm the copy is ignored.
+2. Trust the goatnet's CA root, per the run guide (use the tarball's
+   `<prefix>-goat-cli-ca.pem`; otherwise copy it from an enrolled workstation or request it
+   from the goat side—do not join this POD first merely to fetch trust):
    `sudo GOAT_PROFILE_DIR=/var/lib/goat-moon/goat-cli goat ca add <ca-id>.pem`. The
    `GOAT_PROFILE_DIR` is not optional: without it the root lands in `~/.goat`, which first-boot
-   never reads. Have the user confirm the printed fingerprint against one from the goat side.
-4. `sudo ./host/first-boot.sh zagros-local /path/to/<handle>.cbor`. Watch the numbered steps;
+   never reads. Require `EXPECTED_CA_FINGERPRINT` to match the value supplied separately unless
+   the POD already trusts a CA root.
+3. Run `sudo IDENTITY_PREFLIGHT_ONLY=1 ./host/first-boot.sh zagros-local
+   /path/to/<handle>.cbor`. It verifies the signed bundle and requires the certificate CN to
+   equal the slot ID without starting services, changing live state, or spending the mesh key. An
+   installed, unchanged bundle is not verified again; its installed certificate is checked
+   against the slot ID instead.
+4. Mesh join is the single-use step. Use `--hostname <POD_ID>` and a mode-0600 setup-key file
+   on `/run` or the encrypted state volume, never `--setup-key`, and
+   require both an exact `Management: Connected` state and a connected-peer count greater than
+   zero. An already-enrolled host with no peers never runs `netbird up`; the goat side owns its
+   group assignment. An unknown enrollment state fails closed.
+5. `sudo ./host/first-boot.sh zagros-local /path/to/<handle>.cbor`. Watch the numbered steps;
    on the ZAGROS sandbox the goat-clientd step reporting skipped is normal, not a failure
    (stock NetBird is the sandbox mesh client).
-5. Hand off to `pod-verify` for the health ladder. Do not declare the pod up from
+6. Hand off to `pod-verify` for verification. Do not declare the pod up from
    first-boot's exit code alone.
 
 ## When first-boot fails
@@ -78,7 +93,7 @@ it is idempotent (re-renders config, re-applies compose, rotates the profile if 
 
 ## Rules
 
-- Never paste the setup key, slot id, or bundle contents into files in this repo, commit
-  messages, or this skill.
+- Never paste the setup key or bundle contents into this repo. Non-secret setup values may exist
+  only in the script-managed gitignored `profiles/*-local/` copy; never commit them.
 - Never edit `profiles/zagros/profile.env` (the tracked template); the fill happens only in the
   `-local` copy.

@@ -9,6 +9,9 @@ Drive [docs/pod-host-bringup.md](../../../docs/pod-host-bringup.md) interactivel
 hardware to a host that passes the pod-ready checklist. The doc is the source of truth for
 every command; this skill sequences it and gates the dangerous step.
 
+The reference host OS is **Ubuntu 24.04 LTS**; see the guide's
+[reference-host section](../../../docs/pod-host-bringup.md#reference-host-os).
+
 Do NOT join the mesh or run `first-boot.sh` here. That is `pod-standup`, and it needs the
 bundle. This skill needs no credentials at all.
 
@@ -42,10 +45,10 @@ bundle. This skill needs no credentials at all.
 | `git clone` fails asking for a username | doc Part 1, "This repo" - access is per-GitHub-user; clone on the workstation and copy over |
 | No LAN or DHCP for the machine | doc Part 2, "Find it on the wire" - workstation connection-sharing note |
 | `tests/check-images-public.sh` fails | egress problem on this network; fix before continuing |
-| `/var/lib/goat-moon` not on `/dev/mapper/...` after reboot | doc Part 1, crypttab/fstab lines |
+| `/var/lib/goat-moon` not on `/dev/mapper/goat-moon` after reboot | doc Part 1, crypttab/fstab lines |
 
 ## Rules
 
-- The hostname is the handle from the user's onboarding. Ask for it before authoring
+- The hostname is the POD ID from the user's onboarding. Ask for it before authoring
   cloud-init; do not invent one.
-- Never write secrets, slot ids, or the user's handle into this repo or this skill.
+- Never write secrets, slot IDs, or the user's POD ID into this repo or this skill.
