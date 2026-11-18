@@ -33,4 +33,4 @@ jobs:
           shellcheck -x tests/setup-helpers-local.sh tests/setup-flow-local.sh tests/first-boot-identity-local.sh
           shellcheck -x host/goat-context.sh host/secure-remove.sh
           test "$(shellcheck -x moon_pod_setup.sh 2>&1 | grep -c '^In moon_pod_setup.sh')" -le 26
-          test "$(shellcheck -x host/first-boot.sh 2>&1 | grep -c '^In host/first-boot.sh')" -le 4
+          test "$(shellcheck -x host/first-boot.sh 2>&1 | grep -c '^In host/first-boot.sh')" -le 3
