@@ -16,6 +16,7 @@ mkdir -p "$REPO/host" "$REPO/profiles/test" "$REPO/compose" "$BIN"
 cp "$FIRST_BOOT_SCRIPT" "$ROOT/host/zenoh-router.json5.tmpl" \
     "$ROOT/host/goat-doctor.sh" "$ROOT/host/fabric-peer-identity.sh" \
     "$ROOT/host/goat-context.sh" \
+    "$ROOT/host/secure-remove.sh" \
     "$ROOT/host/goat-doctor.service.example" \
     "$ROOT/host/goat-doctor.timer.example" "$REPO/host/"
 : > "$WORK/bundle.cbor"
@@ -187,6 +188,11 @@ set -e
     || { echo "FAIL: matching identity preflight exited $status" >&2; exit 1; }
 grep -q 'certificate identity matches slot ID' "$WORK/match.out" \
     || { echo "FAIL: matching identity preflight was not reported" >&2; exit 1; }
+if awk -v work="$WORK" 'length > 80 && index($0, work) == 0 {found=1} END {exit !found}' \
+        "$WORK/match.out"; then
+    echo 'FAIL: identity-only first-boot output exceeded 80 columns' >&2
+    exit 1
+fi
 
 write_installed_profile
 : > "$WORK/goat-calls"

@@ -26,7 +26,8 @@ SCRIPT_FIXTURE="$WORK/script-repo"
 mkdir -p "$SCRIPT_FIXTURE/profiles/zagros-local" "$SCRIPT_FIXTURE/compose" \
     "$SCRIPT_FIXTURE/host"
 cp "$SETUP_SCRIPT_SOURCE" "$SCRIPT_FIXTURE/moon_pod_setup.sh"
-cp "$ROOT/host/goat-context.sh" "$SCRIPT_FIXTURE/host/"
+cp "$ROOT/host/goat-context.sh" "$ROOT/host/secure-remove.sh" \
+    "$SCRIPT_FIXTURE/host/"
 SETUP_SCRIPT="$SCRIPT_FIXTURE/moon_pod_setup.sh"
 
 BIN="$WORK/bin"; STUB="$WORK/stub"; mkdir -p "$BIN" "$STUB"
@@ -46,6 +47,9 @@ fi
 if [ "${1:-} ${2:-}" = 'up --help' ]; then
   if [ ! -e "$STUB/no-key-file-support" ]; then
     printf '%s\n' 'Usage: netbird up --setup-key-file FILE' '  --hostname string'
+    if [ -e "$STUB/long-help" ]; then
+      /usr/bin/python3 -c 'print("further help " + "x" * 70000)'
+    fi
   else
     printf '%s\n' 'Usage: netbird up --setup-key KEY' '  --hostname string'
   fi
@@ -95,14 +99,18 @@ if [ "${args[0]:-}" = pub ]; then
 fi
 case "${1:-} ${2:-}" in
   '--version ') echo 'goat test' ;;
-  'ca ls') echo '{"count":1}' ;;
+  'ca ls') if [ -e "$STUB/untrusted-ca" ]; then echo '{"count":0}'; else echo '{"count":1}'; fi ;;
   'doctor --all') echo 'doctor healthy' ;;
 esac
 exit 0
 EOF
 cat > "$BIN/findmnt" <<'EOF'
 #!/usr/bin/env bash
-echo '/dev/mapper/goat-moon'
+if [ -e "$STUB/alternate-mapper" ]; then
+  echo '/dev/mapper/goat-state'
+else
+  echo '/dev/mapper/goat-moon'
+fi
 EOF
 cat > "$BIN/timedatectl" <<'EOF'
 #!/usr/bin/env bash
@@ -204,6 +212,7 @@ INPUT_STATE_FILE="$KEY_FIXTURE/profiles/zagros-local/setup-inputs.env"
 POD_ID=pod-1; POD_ID_EXPLICIT=1
 NETBIRD_MANAGEMENT_URL=https://management.example
 NETBIRD_SETUP_KEY=secret-setup-value; NETBIRD_SETUP_KEY_FILE=""
+: > "$STATE_DIR/.netbird-setup-key.abc123"
 cp "$STUB/need-login.json" "$NETBIRD_JSON"
 out=$(netbird_up_if_needed 2>&1)
 grep -q -- '--hostname pod-1' "$CALLS"
@@ -212,6 +221,11 @@ if grep -q 'secret-setup-value' "$CALLS" "$WORK"/state/* 2>/dev/null; then
     fail_test "typed setup key leaked to a child or state file"
 fi
 [[ "$out" != *secret-setup-value* ]]
+[[ "$out" = *"removed a setup-key file left by an interrupted run"* ]] \
+    || fail_test "stale setup-key cleanup was not reported"
+if find "$STATE_DIR" -maxdepth 1 -name '.netbird-setup-key.*' -print | grep -q .; then
+    fail_test "typed-key run left a setup-key file behind"
+fi
 
 : > "$CALLS"; cp "$STUB/need-login.json" "$NETBIRD_JSON"
 POD_ID='bad/label'; NETBIRD_SETUP_KEY=another-secret
@@ -237,6 +251,7 @@ assert_absent '^netbird up' "$CALLS" \
 
 : > "$CALLS"; cp "$STUB/enrolled-no-peers.json" "$NETBIRD_JSON"
 POD_ID=pod-1; NETBIRD_SETUP_KEY=must-not-be-used
+: > "$STATE_DIR/.netbird-setup-key.abc123"
 expect_failure "enrolled host without peers was reported ready" \
     netbird_up_if_needed > "$WORK/enrolled.out" 2>&1
 grep -q 'setup key is already used' "$WORK/enrolled.out"
@@ -244,6 +259,8 @@ grep -q 'goat side owns peer group assignment' "$WORK/enrolled.out" \
     || fail_test "no-peer message did not name the goat-side owner"
 assert_absent '^netbird up' "$CALLS" \
     "enrolled host tried to spend another setup key"
+[ ! -e "$STATE_DIR/.netbird-setup-key.abc123" ] \
+    || fail_test "enrolled run did not remove the stale setup-key file"
 
 : > "$CALLS"; cp "$STUB/enrolled-management-down.json" "$NETBIRD_JSON"
 NETBIRD_SETUP_KEY=must-not-be-used
@@ -278,12 +295,68 @@ printf 'firstboot preflight=%s\n' "${IDENTITY_PREFLIGHT_ONLY:-0}" >> "$CALLS"
 [ ! -f "$STUB/wrong-bundle" ]
 EOF
 cp "$ROOT/host/goat-context.sh" "$FIXTURE/host/"
+cp "$ROOT/host/secure-remove.sh" "$FIXTURE/host/"
 chmod +x "$FIXTURE/host/first-boot.sh"
 BUNDLE="$WORK/bundle.cbor"; : > "$BUNDLE"
 
 REPO_DIR="$FIXTURE"; PROFILE_ENV="$FIXTURE/profiles/zagros-local/profile.env"
 STATE_DIR="$WORK/state"; GOAT_PROFILE_DIR="$STATE_DIR/goat-cli"
 : > "$CALLS"
+
+: > "$STUB/long-help"
+netbird_setup_key_file_probe \
+    || fail_test "NetBird setup-key-file probe failed on long help output"
+unlink "$STUB/long-help"
+
+GOAT_ARCH=arm64
+part1_checklist > "$WORK/part1-checklist-pass.out" \
+    || fail_test "Part 1 checklist failed with every prerequisite present"
+awk '
+    NF && $0 !~ /^  .{42} (PASS|FAIL|DEFERRED TO PART 2)$/ {bad=1}
+    END {exit bad}
+' "$WORK/part1-checklist-pass.out" \
+    || fail_test "Part 1 checklist printed output outside its checklist rows"
+
+tarball="$WORK/onboarding.tar.gz"
+python3 - "$tarball" <<'PY'
+import io
+import sys
+import tarfile
+
+names = [
+    "pod-goat-cli.cbor", "profile.env", "README.txt", "checksum.txt",
+    "pod-goat-cli-ca.pem",
+    *(f"padding-{index}-" + "x" * 20000 for index in range(4)),
+]
+with tarfile.open(sys.argv[1], "w:gz", format=tarfile.PAX_FORMAT) as archive:
+    for name in names:
+        member = tarfile.TarInfo(name)
+        member.size = 1
+        archive.addfile(member, io.BytesIO(b"x"))
+PY
+BUNDLE_TARBALL="$tarball"; BUNDLE_PATH="$WORK/pod-goat-cli.cbor"
+CA_ROOT_PEM=""; EXPECTED_CA_FINGERPRINT="0$(printf '0%.0s' {1..63})"
+GOATNET=example.invalid; PARTNER_NAMESPACE=slot-a; POD_ID=pod-1; POD_ID_EXPLICIT=1
+NETBIRD_MANAGEMENT_URL=https://management.example
+NETBIRD_SETUP_KEY=unused-secret; NETBIRD_SETUP_KEY_FILE=""
+: > "$STUB/untrusted-ca"; cp "$STUB/need-login.json" "$NETBIRD_JSON"
+tarball_ca_probe || fail_test "CA root in the onboarding tarball was not found"
+part2_preflight > "$WORK/tarball-preflight.out" 2>&1 \
+    || fail_test "Part 2 pre-flight rejected the CA root in the onboarding tarball"
+FAILED=0
+explain_missing_ca_root > "$WORK/tarball-root.out"
+grep -q 'Your tarball carries a \*-goat-cli-ca.pem' "$WORK/tarball-root.out" \
+    || fail_test "missing-root explanation did not take the tarball branch"
+unlink "$STUB/untrusted-ca"
+
+: > "$STUB/alternate-mapper"
+expect_failure "Part 2 accepted a differently named encrypted mapper" \
+    part2_preflight > "$WORK/wrong-mapper.out" 2>&1
+grep -q '/dev/mapper/goat-state' "$WORK/wrong-mapper.out" \
+    || fail_test "LUKS failure did not name the mounted source"
+grep -q '/dev/mapper/goat-moon' "$WORK/wrong-mapper.out" \
+    || fail_test "LUKS failure did not name the required mapper"
+unlink "$STUB/alternate-mapper"
 
 ambiguous_key_file="$WORK/ambiguous-key"
 printf 'file-key\n' > "$ambiguous_key_file"
@@ -814,6 +887,8 @@ delivery_case publish-failed '1' '5\t0' 1 'Publish failed'
 delivery_case not-delivered '1,1,1' '5\t0,6\t100' 0 'Not delivered'
 delivery_case audit-unreadable 'x' '5\t0' 0 'Not verified'
 delivery_case audit-after-unreadable '1,x,x' '5\t0,5\t0' 0 'Not verified'
+delivery_case audit-then-gone '1,1,x' '5\t0,5\t0' 0 'Not verified' 6
+delivery_case audit-counter-drop '5,5,0' '5\t0,5\t0' 0 'Not verified' 6
 delivery_case local-only '1,2,2' '5\t0,5\t0' 0 'Local only'
 delivery_case stale-rise '1,2' '5\t0,6\t99' 0 'Local only'
 delivery_case delivered '1,2' '5\t0,6\t100' 0 'Delivered'
@@ -832,6 +907,11 @@ done
 grep -q 'baseline: publish_count=0 last_publish_at=none' \
     "$WORK/delivery-zero-baseline.out" \
     || fail_test "zero catalog timestamp was not printed as none"
+grep -q 'could not be read after publishing' "$WORK/delivery-audit-then-gone.out" \
+    || fail_test "audit-then-gone omitted the unreadable-audit detail"
+grep -q 'counter went backwards.*restarted during the check' \
+    "$WORK/delivery-audit-counter-drop.out" \
+    || fail_test "audit-counter-drop omitted the restart detail"
 
 set +e
 (
@@ -846,6 +926,24 @@ grep -q 'NOT VERIFIED' "$WORK/not-verified.out"
 grep -q 'bundle verification or certificate/slot binding failed' "$WORK/wrong-bundle.out"
 grep -q '\[FAILED\].*3.0 (Inputs)' "$WORK/placeholder.out"
 grep -q 'Delivery:.*Delivered' "$WORK/part3.out"
+
+REAL_HOME=/h
+BUNDLE_TARBALL=/b
+for condition in missing disconnected; do
+    if [ "$condition" = missing ]; then
+        cp "$STUB/need-login.json" "$NETBIRD_JSON"
+        command() {
+            if [ "${1:-}" = -v ] && [ "${2:-}" = netbird ]; then return 1; fi
+            builtin command "$@"
+        }
+    else
+        cp "$STUB/enrolled-management-down.json" "$NETBIRD_JSON"
+    fi
+    printf 'n\n' | gate_part1 > "$WORK/gate-part1-$condition.out"
+    printf 'n\n' | gate_part2 > "$WORK/gate-part2-$condition.out"
+    printf 'n\n' | gate_part3 > "$WORK/gate-part3-$condition.out"
+    [ "$condition" != missing ] || unset -f command
+done
 for state in first rerun verified; do
     if LC_ALL=C grep -q $'\033' "$WORK/terminal-$state.out"; then
         echo "FAIL: terminal $state output contains color in TERM=dumb mode" >&2; exit 1
@@ -855,7 +953,8 @@ python3 - "$WORK/terminal-first.out" "$WORK/terminal-rerun.out" \
     "$WORK/terminal-verified.out" "$WORK/missing-goatnet.out" \
     "$WORK/clock-failed.out" "$WORK/not-verified.out" "$WORK/part3.out" \
     "$WORK/uppercase-pod-id.out" "$WORK/missing-router-slot.out" \
-    "$WORK/changed-router-slot.out" <<'PY'
+    "$WORK/changed-router-slot.out" "$WORK/tarball-preflight.out" \
+    "$WORK"/gate-part*-missing.out "$WORK"/gate-part*-disconnected.out <<'PY'
 import pathlib
 import sys
 

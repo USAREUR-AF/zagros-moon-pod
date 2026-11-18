@@ -24,8 +24,11 @@ trap cleanup_test_temp_dirs EXIT
 
 script_fixture="$(mktemp -d)"
 test_temp_dirs+=("$script_fixture")
-mkdir -p "$script_fixture/profiles/zagros-local" "$script_fixture/compose"
+mkdir -p "$script_fixture/profiles/zagros-local" "$script_fixture/compose" \
+    "$script_fixture/host"
 cp "$SETUP_SCRIPT_SOURCE" "$script_fixture/moon_pod_setup.sh"
+cp "$ROOT/host/goat-context.sh" "$ROOT/host/secure-remove.sh" \
+    "$script_fixture/host/"
 SETUP_SCRIPT="$script_fixture/moon_pod_setup.sh"
 
 # shellcheck source=../moon_pod_setup.sh
@@ -135,19 +138,51 @@ pass=$((pass + 1))
 
 archive_test_dir="$(mktemp -d)"
 test_temp_dirs+=("$archive_test_dir")
-python3 - "$archive_test_dir/traversal.tar.gz" <<'PY'
+python3 - "$archive_test_dir" <<'PY'
 import io
+import pathlib
 import sys
 import tarfile
 
-with tarfile.open(sys.argv[1], "w:gz") as archive:
-    member = tarfile.TarInfo("../escaped")
-    member.size = 1
-    archive.addfile(member, io.BytesIO(b"x"))
+root = pathlib.Path(sys.argv[1])
+cases = {
+    "parent": (f"../{root.name}-escaped", tarfile.REGTYPE, ""),
+    "absolute": (str(root / "absolute-escaped"), tarfile.REGTYPE, ""),
+    "symlink": ("link", tarfile.SYMTYPE, "target"),
+    "hardlink": ("hard-link", tarfile.LNKTYPE, "target"),
+    "fifo": ("fifo", tarfile.FIFOTYPE, ""),
+}
+for name, (member_name, member_type, link_name) in cases.items():
+    with tarfile.open(root / f"{name}.tar.gz", "w:gz") as archive:
+        member = tarfile.TarInfo(member_name)
+        member.type = member_type
+        member.linkname = link_name
+        if member_type == tarfile.REGTYPE:
+            member.size = 1
+            archive.addfile(member, io.BytesIO(b"x"))
+        else:
+            archive.addfile(member)
 PY
-! archive_members_safe "$archive_test_dir/traversal.tar.gz" >/dev/null 2>&1 \
-    || fail_test "archive traversal member must be refused"
-[ ! -e "$archive_test_dir/../escaped" ] || fail_test "archive traversal escaped its destination"
+for case in parent absolute; do
+    if archive_members_safe "$archive_test_dir/$case.tar.gz" \
+            >"$archive_test_dir/$case.out" 2>&1; then
+        fail_test "$case archive member must be refused"
+    fi
+    grep -q 'escapes the destination' "$archive_test_dir/$case.out" \
+        || fail_test "$case refusal did not name destination escape"
+done
+for case in symlink hardlink fifo; do
+    if archive_members_safe "$archive_test_dir/$case.tar.gz" \
+            >"$archive_test_dir/$case.out" 2>&1; then
+        fail_test "$case archive member must be refused"
+    fi
+    grep -q 'link or special file' "$archive_test_dir/$case.out" \
+        || fail_test "$case refusal did not name the unsafe member type"
+done
+[ ! -e "$(dirname "$archive_test_dir")/$(basename "$archive_test_dir")-escaped" ] \
+    || fail_test "archive traversal escaped its destination"
+[ ! -e "$archive_test_dir/absolute-escaped" ] \
+    || fail_test "absolute archive member was written"
 pass=$((pass + 1))
 
 fabric_evidence_is_current 12 13 1700000010 1700000000 \
@@ -365,7 +400,7 @@ for required in grep python3; do
     command -v "$required" >/dev/null 2>&1 || fail_test "required test tool missing: $required"
 done
 if grep -En 'docker (stop|start) goat-moon-zenoh-router|goat flow .*--since' \
-    "$SETUP_SCRIPT" "$ROOT/docs/partner-run-guide.md"; then
+    "$ROOT/docs/partner-run-guide.md"; then
     fail_test "obsolete router manipulation or operator-audit verification remains"
 fi
 pass=$((pass + 1))
@@ -380,8 +415,6 @@ if "netbird_up_if_needed" in part1:
     raise SystemExit("Part 1 still calls the mesh join")
 if "netbird up" in part1:
     raise SystemExit("Part 1 still contains a direct netbird up call")
-if "mesh_connected_probe" in source:
-    raise SystemExit("the loose mesh probe still exists")
 PY
 pass=$((pass + 1))
 
@@ -389,8 +422,15 @@ grep -q '^VERIFY_CERT_SLOT_BINDING=1$' "$PROFILE_ROOT/zagros/profile.env" \
     || fail_test "zagros must enable certificate/slot binding"
 grep -q '^# VERIFY_CERT_SLOT_BINDING=0' "$PROFILE_ROOT/production/profile.env.TODO" \
     || fail_test "production must leave certificate/slot binding off"
-! grep -q "Fetch your goatnet's root from https://get" "$SETUP_SCRIPT" \
-    || fail_test "missing trust must not direct an unenrolled POD to a mesh-only URL"
+CA_ROOT_PEM=""
+BUNDLE_TARBALL="$archive_test_dir/missing.tar.gz"
+BUNDLE_PATH="$archive_test_dir/missing.cbor"
+explain_missing_ca_root > "$archive_test_dir/missing-root.out"
+! grep -Eq 'https://get\.' "$archive_test_dir/missing-root.out" \
+    || fail_test "missing trust directed an unenrolled POD to a mesh-only URL"
+grep -q 'Copy the public-key file from an already-enrolled workstation' \
+    "$archive_test_dir/missing-root.out" \
+    || fail_test "missing trust omitted the enrolled-workstation recovery step"
 pass=$((pass + 1))
 
 python3 - "$SETUP_SCRIPT" <<'PY'

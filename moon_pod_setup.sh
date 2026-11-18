@@ -31,6 +31,15 @@ else
         return 1
     }
 fi
+if [ -f "$REPO_DIR/host/secure-remove.sh" ]; then
+    # shellcheck source=host/secure-remove.sh
+    source "$REPO_DIR/host/secure-remove.sh"
+else
+    secure_remove_dir() {
+        echo "$REPO_DIR is not a complete repository clone; the partner must replace it" >&2
+        return 1
+    }
+fi
 
 # Under sudo, $HOME is root's home - resolve the real invoking user so bundle
 # defaults below point at the account that actually received the tarball.
@@ -349,7 +358,8 @@ mark_mesh_line() {
     if mesh_ready_probe; then
         printf "    ${GREEN}\xe2\x9c\x93${RESET} %s\n" "$label"
     else
-        printf "    ${RED}\xe2\x9c\x97${RESET} %s - %s\n" "$label" "$MESH_NOT_READY_REASON"
+        printf "    ${RED}\xe2\x9c\x97${RESET} %s\n" "$label"
+        printf '%s\n' "$MESH_NOT_READY_REASON" | fold -s -w 72 | sed 's/^/      /'
     fi
 }
 mesh_enrollment_state() {
@@ -414,7 +424,10 @@ bundle_present_probe() {
 docker_and_compose_probe() { command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; }
 netbird_installed_probe()  { command -v netbird >/dev/null 2>&1; }
 netbird_setup_key_file_probe() {
-    netbird_installed_probe && netbird up --help 2>&1 | grep -q -- '--setup-key-file'
+    local help
+    netbird_installed_probe || return 1
+    help=$(netbird up --help 2>&1) || return 1
+    printf '%s\n' "$help" | grep -- '--setup-key-file' >/dev/null
 }
 python_supported_probe() {
     command -v python3 >/dev/null 2>&1 \
@@ -422,6 +435,17 @@ python_supported_probe() {
 }
 goat_on_path_probe()       { command -v goat >/dev/null 2>&1; }
 luks_mounted_probe()       { [ "$(findmnt -n -o SOURCE "$STATE_DIR" 2>/dev/null)" = "$LUKS_MAPPER" ]; }
+luks_mount_problem() {
+    local source
+    source=$(findmnt -n -o SOURCE "$STATE_DIR" 2>/dev/null) || source=""
+    if [ -n "$source" ]; then
+        printf '%s\n' "$STATE_DIR is mounted from $source."
+    else
+        printf '%s\n' "Nothing is mounted at $STATE_DIR."
+    fi
+    printf '%s\n' "Setup requires $LUKS_MAPPER there. Run Part 1, or open the existing" \
+        "encrypted volume under the name goat-moon."
+}
 repo_found_probe()         { [ -f "$REPO_DIR/host/first-boot.sh" ]; }
 setup_key_file_secure() {
     local mode
@@ -450,7 +474,12 @@ ca_root_trusted_probe() {
     ! echo "$out" | grep -qE '"count":[[:space:]]*0([^0-9]|$)'
 }
 # Read-only: is a *-goat-cli-ca.pem inside the tarball (so step 2.1 will unpack it beside the .cbor)?
-tarball_ca_probe()         { [ -f "$BUNDLE_TARBALL" ] && tar tzf "$BUNDLE_TARBALL" 2>/dev/null | grep -q -- '-goat-cli-ca\.pem$'; }
+tarball_ca_probe() {
+    local listing
+    [ -f "$BUNDLE_TARBALL" ] || return 1
+    listing=$(tar tzf "$BUNDLE_TARBALL" 2>/dev/null) || return 1
+    printf '%s\n' "$listing" | grep -- '-goat-cli-ca\.pem$' >/dev/null
+}
 # Mirrors the trust step: a CA_ROOT_PEM that is set must exist; it never swaps in another
 # root for it. The tarball check stands in for the .pem that step 2.1 has not unpacked yet.
 ca_root_or_pem_probe() {
@@ -468,7 +497,15 @@ part1_ready_probe() {
 part2_done_probe() { [ -f "$BUNDLE_PATH" ] && containers_up_probe; }
 
 netbird_up_if_needed() {
-    local enrollment_rc key_file_arg=()
+    local enrollment_rc stale key_file_arg=()
+    if luks_mounted_probe; then
+        for stale in "$STATE_DIR"/.netbird-setup-key.*; do
+            [ -f "$stale" ] && [ ! -L "$stale" ] || continue
+            : > "$stale" || { fail "could not empty an abandoned setup-key file"; return 1; }
+            unlink "$stale" || { fail "could not remove an abandoned setup-key file"; return 1; }
+            warn "removed a setup-key file left by an interrupted run"
+        done
+    fi
     if [ -n "$NETBIRD_SETUP_KEY" ] && [ -n "$NETBIRD_SETUP_KEY_FILE" ]; then
         fail "A typed setup key and NETBIRD_SETUP_KEY_FILE are both set."
         echo "  Unset NETBIRD_SETUP_KEY_FILE, or restart without typing the key."
@@ -503,10 +540,12 @@ netbird_up_if_needed() {
     fi
     if [ -z "$NETBIRD_SETUP_KEY" ] && [ -z "$NETBIRD_SETUP_KEY_FILE" ]; then
         warn "netbird is not enrolled and no setup key was supplied"
+        echo "  Choose Configure inputs and enter the key at the hidden prompt."
         return 1
     fi
     if [ -z "$NETBIRD_MANAGEMENT_URL" ]; then
-        warn "mesh management URL is missing - take it from the onboarding package"
+        warn "mesh management URL is missing"
+        echo "  Choose Configure inputs and enter the URL from the onboarding package."
         return 1
     fi
     if ! valid_label "$POD_ID"; then
@@ -518,8 +557,11 @@ netbird_up_if_needed() {
     if [ -n "$NETBIRD_SETUP_KEY_FILE" ]; then
         key_file_arg=(--setup-key-file "$NETBIRD_SETUP_KEY_FILE")
     else
-        luks_mounted_probe \
-            || { fail "$STATE_DIR is not confirmed on the encrypted state volume; setup key was not written or spent"; return 1; }
+        if ! luks_mounted_probe; then
+            fail "the encrypted state volume is not ready; setup key was not written or spent"
+            luks_mount_problem | fold -s -w 74 | sed 's/^/  /'
+            return 1
+        fi
         NETBIRD_KEY_FILE=$(mktemp -p "$STATE_DIR" .netbird-setup-key.XXXXXX) \
             || { fail "could not create setup-key file on the encrypted state volume"; return 1; }
         chmod 600 "$NETBIRD_KEY_FILE"
@@ -549,25 +591,21 @@ netbird_up_if_needed() {
     fi
 }
 
-# Remove a temporary directory this script created, including read-only files.
-remove_temp_dir() {
-    [ -n "$1" ] && [ -d "$1" ] || return 0
-    find "$1" -type f -exec chmod u+w {} + 2>/dev/null || true
-    find "$1" \( -type f -o -type l \) -delete
-    find "$1" -depth -type d -empty -delete
-}
-
 verify_temp_cleanup() {
     if [ -n "${VERIFY_PAYLOAD_FILE:-}" ] && [ -f "$VERIFY_PAYLOAD_FILE" ]; then
         : > "$VERIFY_PAYLOAD_FILE"; unlink "$VERIFY_PAYLOAD_FILE"
     fi
     VERIFY_PAYLOAD_FILE=""
-    remove_temp_dir "${VERIFY_TEMP_PROFILE:-}"
+    if ! secure_remove_dir "${VERIFY_TEMP_PROFILE:-}"; then
+        warn "could not remove protected acceptance-check storage"
+    fi
     VERIFY_TEMP_PROFILE=""
 }
 
 goat_install_temp_cleanup() {
-    remove_temp_dir "${GOAT_INSTALL_TEMP_DIR:-}"
+    if ! secure_remove_dir "${GOAT_INSTALL_TEMP_DIR:-}"; then
+        warn "could not remove protected goat-install storage"
+    fi
     GOAT_INSTALL_TEMP_DIR=""
 }
 
@@ -700,7 +738,7 @@ run_part1() {
 
     REAL_USER_FOR_DOCKER="${SUDO_USER:-}"
     if [ -n "$REAL_USER_FOR_DOCKER" ] && id "$REAL_USER_FOR_DOCKER" >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
-        if id -nG "$REAL_USER_FOR_DOCKER" | grep -qw docker; then
+        if id -nG "$REAL_USER_FOR_DOCKER" | grep -w docker >/dev/null; then
             ok "$REAL_USER_FOR_DOCKER already in docker group"
         else
             usermod -aG docker "$REAL_USER_FOR_DOCKER" && ok "added $REAL_USER_FOR_DOCKER to docker group (re-login to take effect)"
@@ -986,7 +1024,7 @@ part1_checklist() {
     checklist_result() {
         local label="$1"
         shift
-        if "$@"; then result=PASS; else result=FAIL; checklist_failed=1; fi
+        if "$@" >/dev/null 2>&1; then result=PASS; else result=FAIL; checklist_failed=1; fi
         printf "  %-42s %s\n" "$label" "$result"
     }
     checklist_result "64-bit Linux host" test -n "$GOAT_ARCH"
@@ -1140,8 +1178,11 @@ part2_preflight() {
         || { fail "Python 3.9 or newer is required by the setup helpers; upgrade Python before Part 2"; return 1; }
     command -v openssl >/dev/null 2>&1 \
         || { fail "OpenSSL is missing; the partner must complete Part 1"; return 1; }
-    luks_mounted_probe \
-        || { fail "$STATE_DIR is not the encrypted state volume; the partner must complete Part 1"; return 1; }
+    if ! luks_mounted_probe; then
+        fail "the encrypted state volume is not ready"
+        luks_mount_problem | fold -s -w 74 | sed 's/^/  /'
+        return 1
+    fi
     [ -f "$REPO_DIR/host/first-boot.sh" ] \
         || { fail "$REPO_DIR is not a complete repository clone; the partner must replace it"; return 1; }
     if [ -z "$GOATNET" ] || [ "$GOATNET" = "your.goatnet.domain" ] || ! valid_goatnet "$GOATNET"; then
@@ -1189,7 +1230,8 @@ part2_preflight() {
             || { fail "the setup key is missing; use Configure inputs or NETBIRD_SETUP_KEY_FILE with the key from the goat-side welcome package"; return 1; } ;;
         *) fail "NetBird enrollment state is unreadable; refusing to spend a setup key"; return 1 ;;
     esac
-    ok "complete Part 2 pre-flight passed; all inputs are present before the single-use mesh step"
+    ok "Part 2 pre-flight passed"
+    echo "  All inputs are present before the single-use mesh step."
 }
 
 run_part2() {
@@ -1199,14 +1241,6 @@ run_part2() {
     step "2.0  Pre-flight - re-check the pod-ready checklist (never trust a stale run)"
     if ! part2_preflight; then
         echo "${RED}${BOLD}STOPPING before touching the bundle or the mesh setup key.${RESET}"
-        return 1
-    fi
-
-    if ! valid_goatnet "$GOATNET" || ! valid_management_url "$NETBIRD_MANAGEMENT_URL" \
-        || ! valid_absolute_path "$BUNDLE_TARBALL" || ! valid_absolute_path "$BUNDLE_PATH" \
-        || ! valid_absolute_path "$CA_ROOT_PEM" || ! valid_fingerprint "$EXPECTED_CA_FINGERPRINT"; then
-        fail "one or more saved setup inputs is invalid - choose Configure inputs"
-        echo "${RED}${BOLD}STOPPING before touching the bundle or mesh key.${RESET}"
         return 1
     fi
 
@@ -1339,14 +1373,6 @@ run_part2() {
     fi
 
     step "2.6  Mesh join - the only single-use step"
-    if mesh_enrollment_state; then MESH_ENROLLMENT=0; else MESH_ENROLLMENT=$?; fi
-    if [ "$MESH_ENROLLMENT" -eq 1 ]; then
-        [ -n "$NETBIRD_MANAGEMENT_URL" ] || { fail "mesh management URL is missing"; return 1; }
-        netbird_key_set_probe || { fail "mesh setup key is missing; choose 'Configure inputs' and enter it at the hidden prompt"; return 1; }
-    elif [ "$MESH_ENROLLMENT" -ne 0 ]; then
-        fail "could not determine NetBird enrollment state; refusing to spend a setup key"
-        return 1
-    fi
     netbird_up_if_needed || return 1
     if ! mesh_ready_probe; then
         fail "mesh is not ready: $MESH_NOT_READY_REASON"
@@ -1397,9 +1423,9 @@ run_part2() {
     else
         fail "goat doctor --all reported problems - see output above"
     fi
-    docker ps --format '{{.Names}}' | grep -q "goat-moon-zenoh-router" \
+    docker ps --format '{{.Names}}' | grep "goat-moon-zenoh-router" >/dev/null \
         && ok "goat-moon-zenoh-router container is up" || fail "goat-moon-zenoh-router container not found"
-    docker ps --format '{{.Names}}' | grep -q "goat-moon-audit-sink" \
+    docker ps --format '{{.Names}}' | grep "goat-moon-audit-sink" >/dev/null \
         && ok "goat-moon-audit-sink container is up" \
         || warn "goat-moon-audit-sink container not found - see docs/partner-run-guide.md, 'Trouble'"
 
@@ -1477,7 +1503,10 @@ publish_through_local_router() {
     context=$ACTIVE_GOAT_CONTEXT
     [ -f "$GOAT_PROFILE_DIR/contexts/$context/profile.toml" ] \
         || { echo "active profile not found under $GOAT_PROFILE_DIR" >&2; return 1; }
-    luks_mounted_probe || { echo "$STATE_DIR is not on the LUKS volume" >&2; return 1; }
+    if ! luks_mounted_probe; then
+        luks_mount_problem >&2
+        return 1
+    fi
     temp_profile=$(mktemp -d -p "$STATE_DIR" .acceptance-profile.XXXXXX) || return 1
     VERIFY_TEMP_PROFILE="$temp_profile"
     chmod 700 "$temp_profile"
@@ -1514,10 +1543,17 @@ publish_through_local_router() {
 
 cleanup_stale_acceptance_profiles() {
     local stale
-    luks_mounted_probe || return 1
+    ACCEPTANCE_CLEANUP_ERROR=""
+    if ! luks_mounted_probe; then
+        ACCEPTANCE_CLEANUP_ERROR=$(luks_mount_problem)
+        return 1
+    fi
     for stale in "$STATE_DIR"/.acceptance-profile.*; do
         [ -d "$stale" ] || continue
-        remove_temp_dir "$stale"
+        secure_remove_dir "$stale" || {
+            ACCEPTANCE_CLEANUP_ERROR="could not remove abandoned acceptance-check storage"
+            return 1
+        }
     done
 }
 
@@ -1583,11 +1619,20 @@ run_delivery_check() {
         attempt=$((attempt + 1))
         info "delivery poll $attempt (elapsed $((now - started))s, ${remaining}s remaining)"
 
-        if [ "$LOCAL_OBSERVED" -eq 0 ] \
-                && after_local=$(audit_samples_total "$remaining"); then
-            AUDIT_POLL_READABLE=1
-            awk -v before="$BEFORE_LOCAL" -v after="$after_local" \
-                'BEGIN { exit !(after > before) }' && LOCAL_OBSERVED=1
+        if [ "$LOCAL_OBSERVED" -eq 0 ]; then
+            if after_local=$(audit_samples_total "$remaining"); then
+                AUDIT_POLL_READABLE=1
+                if awk -v before="$BEFORE_LOCAL" -v after="$after_local" \
+                        'BEGIN { exit !(after < before) }'; then
+                    AUDIT_POLL_READABLE=0
+                    DELIVERY_DETAIL="the local audit counter went backwards, so goat-moon-audit-sink restarted during the check; retry Part 3"
+                    break
+                fi
+                awk -v before="$BEFORE_LOCAL" -v after="$after_local" \
+                    'BEGIN { exit !(after > before) }' && LOCAL_OBSERVED=1
+            else
+                AUDIT_POLL_READABLE=0
+            fi
         fi
 
         if [ "$CATALOG_BASELINE_READABLE" -eq 1 ] \
@@ -1632,7 +1677,7 @@ run_delivery_check() {
             DELIVERY_DETAIL="the local audit counter did not rise; inspect goat-moon-audit-sink and the router, then retry Part 3" ;;
         "Not verified")
             if [ "$AUDIT_POLL_READABLE" -ne 1 ]; then
-                DELIVERY_DETAIL="the local audit count could not be read after publishing; repair goat-moon-audit-sink, then retry Part 3"
+                DELIVERY_DETAIL=${DELIVERY_DETAIL:-"the local audit count could not be read after publishing; repair goat-moon-audit-sink, then retry Part 3"}
             else
                 DELIVERY_DETAIL="${LAST_CATALOG_ERROR:-the catalog count could not be read}; retry Part 3, then share this cause with the goat side if it persists"
             fi ;;
@@ -1678,7 +1723,8 @@ run_part3() {
     printf '%s\n' "$GOAT_PROFILE_DIR" | fold -w 74 | sed 's/^/    /'
 
     if ! cleanup_stale_acceptance_profiles; then
-        note_fail "3.0 (Storage)" "$STATE_DIR is not confirmed on the LUKS volume; nothing was published."
+        note_fail "3.0 (Storage)" "$ACCEPTANCE_CLEANUP_ERROR
+Nothing was published."
         record "Local checks" "FAIL"; record "Delivery" "Not run"
         DELIVERY_DETAIL="the protected acceptance profile could not be created"
         finish_part3; return $?
@@ -1994,7 +2040,7 @@ gate_part1() {
     mark_line "Docker + compose plugin present" docker_and_compose_probe
     mark_line "NetBird installed"                netbird_installed_probe
     mark_line "NetBird supports --setup-key-file" netbird_setup_key_file_probe
-    mark_mesh_line "NetBird mesh joined (management + peer ready)"
+    mark_mesh_line "NetBird mesh joined (Part 2 joins it)"
     mark_line "goat CLI on PATH"                  goat_on_path_probe
     mark_line "LUKS state volume mounted"         luks_mounted_probe
     echo
@@ -2032,7 +2078,7 @@ gate_part2() {
     mark_line "mesh enrolled (or setup key entered / NETBIRD_SETUP_KEY_FILE readable)" mesh_or_key_probe
     mark_line "CA root trusted (or available to add now)" ca_root_or_pem_probe
     echo "    PARTNER_NAMESPACE = $PARTNER_NAMESPACE   POD_ID = $POD_ID"
-    echo "    Choose 'c' from the menu to correct an input; do not edit this tracked script."
+    echo "    Choose 'c' to correct an input; do not edit this tracked script."
     echo
     read -r -p "  Start PART 2 now? [y/N/q]: " ans
     case "$ans" in

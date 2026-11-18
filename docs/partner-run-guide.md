@@ -104,16 +104,20 @@ For a manual stand-up, put the key in a protected temporary file and use the sam
 #    GOAT_PROFILE_DIR is load-bearing — without it the root lands where first-boot never looks.
 sudo GOAT_PROFILE_DIR=/var/lib/goat-moon/goat-cli goat ca add <ca-id>.pem
 
-# 2. Join only after every other input validates. The key never appears in ps or shell history.
+# 2. Verify the bundle and certificate/slot binding without starting services,
+#    changing live state, or spending the setup key.
+sudo IDENTITY_PREFLIGHT_ONLY=1 ./host/first-boot.sh zagros-local /path/to/<handle>.cbor
+
+# 3. Join only after every other input validates. The key never appears in ps or shell history.
 sudo install -m 600 /dev/null /run/netbird-setup-key
 read -rs key; printf %s "$key" | sudo tee /run/netbird-setup-key >/dev/null; unset key
-sudo netbird up --management-url <mgmt-url-from-onboarding> --setup-key-file /run/netbird-setup-key
+sudo netbird up --management-url <mgmt-url-from-onboarding> --hostname <POD_ID> --setup-key-file /run/netbird-setup-key
 sudo sh -c ': > /run/netbird-setup-key; unlink /run/netbird-setup-key'
 
-# 3. Require exact management connectivity and a non-zero connected-peer count.
+# 4. Require exact management connectivity and a non-zero connected-peer count.
 sudo netbird status
 
-# 4. Run first-boot with your filled profile + your bundle. This verifies the bundle, extracts your
+# 5. Run first-boot with your filled profile + your bundle. This verifies the bundle, extracts your
 #    mTLS identity, renders the Zenoh router config from the BUNDLE's router endpoint, and starts
 #    the data plane. Re-runnable.
 sudo ./host/first-boot.sh zagros-local /path/to/<handle>.cbor
@@ -268,7 +272,7 @@ three minutes. Its delivery row reports the first applicable outcome:
 | **Publish failed** | The local publish returned an error. This is a failure. |
 | **Not delivered** | The readable local audit count did not rise. This is a failure even if the slot-wide catalog count rose. |
 | **Not verified** | A required count could not be read, including a stopped audit sink or a refused, throttled, timed-out, or unreachable catalog. This is neither pass nor fail; follow the printed next step. |
-| **Local only** | The local count rose but the slot-wide catalog count did not. This is a failure; send the printed key and UTC time to the goat side. |
+| **Local only** | The local count rose but the slot-wide catalog count did not. This is a failure; send the printed key, nonce, and UTC time to the goat side. |
 | **Delivered** | Both counts rose. This passes, but the slot-wide count cannot prove which message caused the rise. |
 
 The overall result is **Verified** only when every local check passes and delivery is

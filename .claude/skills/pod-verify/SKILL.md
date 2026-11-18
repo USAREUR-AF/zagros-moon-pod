@@ -38,7 +38,7 @@ verdict and its printed cause; do not collapse them into “network issues” or
 | New router config was rejected; previous config is running | service was rolled back but the run failed. Check profile inputs, retain the displayed logs, correct the cause, and re-run |
 | Rollback refused after an identity change | leave the router stopped. The goat-side operator confirms the intended POD and fabric identities; correct the bundle or profile and re-run. Never restore the saved file by hand |
 | Delivery is `Not verified` | follow the printed next step; share the cause and UTC test time if it persists |
-| Delivery is `Local only` | share the printed key and UTC test time; do not infer an ACL denial |
+| Delivery is `Local only` | share the printed key, nonce, and UTC test time; do not infer an ACL denial |
 | Publish vanishes / sub receives nothing inside the slot | [docs/router-config.md](../../../docs/router-config.md), ACL troubleshooting ladder |
 | Doctor router check fails | run-guide Trouble: mesh up? bundle expired? (`goat profile show`) |
 | Image pull failure | `tests/check-images-public.sh` from the repo root; egress problem if it fails |

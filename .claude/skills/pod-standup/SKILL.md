@@ -47,12 +47,13 @@ in this flow is re-runnable; this is the step to be slow on.
    `GOAT_PROFILE_DIR` is not optional: without it the root lands in `~/.goat`, which first-boot
    never reads. Require `EXPECTED_CA_FINGERPRINT` to match the value supplied separately unless
    the POD already trusts a CA root.
-3. Run the script's identity-only pre-flight. It verifies the signed bundle and requires the
-   certificate CN to equal the slot ID without starting services or spending the mesh key. An
+3. Run `sudo IDENTITY_PREFLIGHT_ONLY=1 ./host/first-boot.sh zagros-local
+   /path/to/<handle>.cbor`. It verifies the signed bundle and requires the certificate CN to
+   equal the slot ID without starting services, changing live state, or spending the mesh key. An
    installed, unchanged bundle is not verified again; its installed certificate is checked
    against the slot ID instead.
-4. Mesh join is the single-use step. Use a mode-0600 setup-key file on `/run` or the encrypted
-   state volume, never `--setup-key`, and
+4. Mesh join is the single-use step. Use `--hostname <POD_ID>` and a mode-0600 setup-key file
+   on `/run` or the encrypted state volume, never `--setup-key`, and
    require both an exact `Management: Connected` state and a connected-peer count greater than
    zero. An already-enrolled host with no peers never runs `netbird up`; the goat side owns its
    group assignment. An unknown enrollment state fails closed.

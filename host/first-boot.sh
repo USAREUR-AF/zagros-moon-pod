@@ -46,6 +46,8 @@ source "$PROFILE_ENV"
 source "${POD_DIR}/host/fabric-peer-identity.sh"
 # shellcheck source=host/goat-context.sh
 source "${POD_DIR}/host/goat-context.sh"
+# shellcheck source=host/secure-remove.sh
+source "${POD_DIR}/host/secure-remove.sh"
 # Test hook: production uses the shipped template; integration tests may render a temporary copy.
 : "${ZENOH_ROUTER_TEMPLATE:=${POD_DIR}/host/zenoh-router.json5.tmpl}"
 : "${POD_STATE_DIR:=/var/lib/goat-moon}"
@@ -127,15 +129,6 @@ active_context_dir() {
 
 STAGED_PROFILE=""
 CONFIG_TMP=""
-secure_remove_dir() {
-  local directory="$1"
-  if [ -n "${directory}" ] && [ -d "${directory}" ]; then
-    find "${directory}" -type f -exec chmod u+w {} + 2>/dev/null || return 1
-    find "${directory}" \( -type f -o -type l \) -delete 2>/dev/null || return 1
-    find "${directory}" -depth -type d -empty -delete 2>/dev/null || return 1
-    [ ! -e "${directory}" ] || return 1
-  fi
-}
 staged_profile_cleanup() {
   secure_remove_dir "${STAGED_PROFILE:-}" || return 1
   STAGED_PROFILE=""
@@ -227,7 +220,8 @@ else
   staged_profile_cleanup
 fi
 if [ "${IDENTITY_PREFLIGHT_ONLY:-0}" = "1" ]; then
-  echo "==> identity pre-flight complete; the live profile, bundle hash, and services were not changed"
+  echo "==> identity pre-flight complete"
+  echo "    The live profile, bundle hash, and services were not changed."
   exit 0
 fi
 
