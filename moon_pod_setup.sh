@@ -500,7 +500,9 @@ netbird_up_if_needed() {
     local enrollment_rc stale key_file_arg=()
     if luks_mounted_probe; then
         for stale in "$STATE_DIR"/.netbird-setup-key.*; do
-            [ -f "$stale" ] && [ ! -L "$stale" ] || continue
+            if [ ! -f "$stale" ] || [ -L "$stale" ]; then
+                continue
+            fi
             : > "$stale" || { fail "could not empty an abandoned setup-key file"; return 1; }
             unlink "$stale" || { fail "could not remove an abandoned setup-key file"; return 1; }
             warn "removed a setup-key file left by an interrupted run"
