@@ -48,7 +48,7 @@ if [ "${1:-} ${2:-}" = 'up --help' ]; then
   if [ ! -e "$STUB/no-key-file-support" ]; then
     printf '%s\n' 'Usage: netbird up --setup-key-file FILE' '  --hostname string'
     if [ -e "$STUB/long-help" ]; then
-      /usr/bin/python3 -c 'print("further help " + "x" * 70000)'
+      /usr/bin/python3 -c 'print("further help " + "x" * 1048576)'
     fi
   else
     printf '%s\n' 'Usage: netbird up --setup-key KEY' '  --hostname string'
@@ -343,6 +343,10 @@ NETBIRD_SETUP_KEY=unused-secret; NETBIRD_SETUP_KEY_FILE=""
 tarball_ca_probe || fail_test "CA root in the onboarding tarball was not found"
 part2_preflight > "$WORK/tarball-preflight.out" 2>&1 \
     || fail_test "Part 2 pre-flight rejected the CA root in the onboarding tarball"
+: > "$STUB/long-help"
+part2_preflight > "$WORK/long-help-preflight.out" 2>&1 \
+    || fail_test "Part 2 pre-flight rejected NetBird help longer than the pipe buffer"
+unlink "$STUB/long-help"
 FAILED=0
 explain_missing_ca_root > "$WORK/tarball-root.out"
 grep -q 'Your tarball carries a \*-goat-cli-ca.pem' "$WORK/tarball-root.out" \

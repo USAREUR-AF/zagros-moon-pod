@@ -1151,7 +1151,7 @@ trust_ca_root() {
 }
 
 part2_preflight() {
-    local enrollment_rc netbird_help
+    local enrollment_rc
     warn_ignored_setup_key_environment preflight
     if [ -n "$NETBIRD_SETUP_KEY" ] && [ -n "$NETBIRD_SETUP_KEY_FILE" ]; then
         fail "A typed setup key and NETBIRD_SETUP_KEY_FILE are both set."
@@ -1171,8 +1171,7 @@ part2_preflight() {
         || { fail "envsubst is missing; the partner must complete Part 1"; return 1; }
     command -v netbird >/dev/null 2>&1 \
         || { fail "NetBird is missing; the partner must complete Part 1"; return 1; }
-    netbird_help=$(netbird up --help 2>&1)
-    printf '%s' "$netbird_help" | grep -q -- '--setup-key-file' \
+    netbird_setup_key_file_probe \
         || { fail "NetBird lacks --setup-key-file; upgrade NetBird before supplying the single-use key"; return 1; }
     command -v goat >/dev/null 2>&1 \
         || { fail "goat is missing; copy the binary and checksum supplied by the goat side, then run Part 1"; return 1; }
@@ -1276,27 +1275,9 @@ run_part2() {
 
     step "2.2  Slot ID + POD ID"
     # Both values are spliced unescaped into sed programs and zenoh key expressions
-    # below - validate the character set once here, at the boundary.
-    if ! valid_slot "$PARTNER_NAMESPACE"; then
-        fail "slot ID is missing or still a placeholder - choose 'Configure inputs'"
-    else
-        ok "slot ID = $PARTNER_NAMESPACE"
-    fi
-    if [ "$POD_ID_EXPLICIT" -ne 1 ]; then
-        fail "POD_ID is still the unconfirmed default '$POD_ID'."
-        show_pod_id_rule
-        echo "  Choose Configure inputs and type the value explicitly."
-    elif ! valid_label "$POD_ID"; then
-        fail "POD_ID '$POD_ID' is not valid."
-        show_pod_id_rule
-    else
-        ok "POD ID = $POD_ID"
-    fi
-
-    if [ "$FAILED" -ne 0 ]; then
-        echo "${RED}${BOLD}STOPPING - slot ID or POD ID is missing or invalid.${RESET}"
-        return 1
-    fi
+    # below, so part2_preflight validates both before Part 2 makes changes.
+    ok "slot ID = $PARTNER_NAMESPACE"
+    ok "POD ID = $POD_ID"
 
     step "2.3  Fill your profile ($SOURCE_PROFILE -> $PROFILE_NAME)"
     PROFILE_DIR="$REPO_DIR/profiles/$PROFILE_NAME"
