@@ -1364,7 +1364,8 @@ run_part2() {
     fi
 
     step "2.7  host/first-boot.sh $PROFILE_NAME $BUNDLE_PATH"
-    info "watch the six numbered steps below. On the zagros sandbox, [4/6] (goat-clientd import) printing 'skipped' is normal."
+    info "first-boot prints six numbered steps. On the zagros sandbox, step [3/6]"
+    echo "  (importing bundle into goat-clientd) printing 'skipped' is normal."
     if ( cd "$REPO_DIR" && ./host/first-boot.sh "$PROFILE_NAME" "$BUNDLE_PATH" ); then
         ok "first-boot.sh completed"
     else
