@@ -27,7 +27,9 @@ usage() {
   echo "usage: sudo $0 <profile-name> <bundle.cbor>   e.g. $0 zagros /path/to/pod.cbor"
   exit 2
 }
-[ -n "$PROFILE" ] && [ -n "$BUNDLE" ] || usage
+if [ -z "$PROFILE" ] || [ -z "$BUNDLE" ]; then
+  usage
+fi
 [ "$(id -u)" -eq 0 ] || { echo "must run as root (tunnel + cert privileges)"; exit 2; }
 
 PROFILE_ENV="${POD_DIR}/profiles/${PROFILE}/profile.env"
