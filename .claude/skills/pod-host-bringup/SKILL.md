@@ -9,6 +9,9 @@ Drive [docs/pod-host-bringup.md](../../../docs/pod-host-bringup.md) interactivel
 hardware to a host that passes the pod-ready checklist. The doc is the source of truth for
 every command; this skill sequences it and gates the dangerous step.
 
+The reference host OS is **Ubuntu 24.04 LTS**; see the guide's
+[reference-host section](../../../docs/pod-host-bringup.md#reference-host-os).
+
 Do NOT join the mesh or run `first-boot.sh` here. That is `pod-standup`, and it needs the
 bundle. This skill needs no credentials at all.
 

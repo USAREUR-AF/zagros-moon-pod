@@ -141,6 +141,9 @@ zagros-moon-pod/
 
 ## Getting started
 
+The reference host OS is **Ubuntu 24.04 LTS**; see the host guide's
+[reference-host section](docs/pod-host-bringup.md#reference-host-os).
+
 - **Fastest path — the all-in-one setup script:** [`moon_pod_setup.sh`](moon_pod_setup.sh) merges
   bring-up + stand-up + verify into one interactive, re-runnable menu. On the pod host, from
   inside the repo clone:

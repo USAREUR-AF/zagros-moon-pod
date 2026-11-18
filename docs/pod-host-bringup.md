@@ -13,6 +13,15 @@ Two parts:
 
 If your host already runs Linux and you administer it comfortably, skip the worked example.
 
+## Reference host OS
+
+The tested target is **Ubuntu 24.04 LTS** Server on arm64 or amd64. DISA has published a
+[STIG for Ubuntu 24.04 LTS](https://ncp.nist.gov/checklist/1274), while Canonical's
+[release-cycle page](https://ubuntu.com/about/release-cycle) shows no STIG for 26.04 yet.
+A stock install is not STIG-compliant: applying that hardening, for example with Ubuntu
+Security Guide and Ubuntu Pro, is the site's responsibility. Setup has been tested on stock
+24.04, not on a STIG-hardened host. Other Linux hosts may work but are not the tested target.
+
 ## What "pod-ready" means
 
 The run guide assumes all of this. Each row has a check that must pass:
@@ -304,7 +313,8 @@ traffic to allow.
 
 ## Part 2 — worked example: Raspberry Pi 5
 
-Built against: Raspberry Pi 5, booting Ubuntu Server 24.04 preinstalled arm64
+Built against the reference host OS: Raspberry Pi 5, booting Ubuntu Server 24.04 LTS
+preinstalled arm64
 (`ubuntu-24.04.x-preinstalled-server-arm64+raspi.img.xz`), from either an SD card or an NVMe
 drive on a HAT. The pod's images ship arm64 builds, so nothing else changes.
 
