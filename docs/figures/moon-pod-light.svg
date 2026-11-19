@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 528" width="880" height="528" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, &apos;Segoe UI&apos;, &apos;Noto Sans&apos;, Helvetica, Arial, sans-serif">
+<title id="t">One host you run, publishing into a goat fabric and receiving from it</title>
+<desc id="d">On your own host, applications built on the clients/ SDKs (6 languages) publish and subscribe through a zenoh 1.9.0 router with mTLS that may write only your slot, &lt;slot_id&gt;/**; an audit-sink observes your slot; goat-cli and a goat-doctor timer run on the host beside the mesh client (NetBird, kernel WireGuard). Over the WireGuard mesh the router publishes your slot to the zagros sandbox fabric and receives your inbound prefix. The environment owner mints the slot, mTLS identity and single-use setup key with goat machine enroll, and controls access rules and what data may leave the pod. Used today to learn how a pod joins a goatnet.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#818b98"/></marker></defs>
+<rect width="100%" height="100%" rx="12" fill="#ffffff"/>
+<text x="24" y="38" font-size="20" fill="#1f2328" text-anchor="start" font-weight="600">One host you run, publishing into a goat fabric and receiving from it</text>
+<text x="24" y="62" font-size="14" fill="#59636e" text-anchor="start">Used today to learn how a pod joins a goatnet: build one and join the zagros sandbox.</text>
+<rect x="24" y="92" width="520" height="392" rx="12" fill="#ffffff" stroke="#0969da" stroke-width="2"/>
+<text x="44" y="122" font-size="16" fill="#1f2328" text-anchor="start" font-weight="600">Your host: you run it</text>
+<text x="44" y="144" font-size="14" fill="#59636e" text-anchor="start">Ubuntu 24.04 · encrypted state volume</text>
+<rect x="44" y="196" width="140" height="120" rx="8" fill="#f6f8fa" stroke="#d1d9e0" stroke-width="1"/>
+<text x="114" y="226" font-size="15" fill="#1f2328" text-anchor="middle" font-weight="600">Your apps</text>
+<text x="114" y="250" font-size="13" fill="#1f2328" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">clients/ SDKs</text>
+<text x="114" y="272" font-size="14" fill="#1f2328" text-anchor="middle">6 languages</text>
+<text x="114" y="294" font-size="14" fill="#59636e" text-anchor="middle">pub · sub</text>
+<rect x="204" y="166" width="320" height="160" rx="10" fill="#ffffff" stroke="#818b98" stroke-width="1" stroke-dasharray="5 4"/>
+<text x="218" y="186" font-size="13" fill="#59636e" text-anchor="start">docker compose · host network</text>
+<rect x="220" y="196" width="288" height="56" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="234" y="219" font-size="15" fill="#1f2328" text-anchor="start" font-weight="600">zenoh-router</text>
+<text x="352" y="219" font-size="13" fill="#59636e" text-anchor="start" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">zenoh 1.9.0</text>
+<text x="234" y="240" font-size="14" fill="#1f2328" text-anchor="start">mTLS · may write only &lt;slot_id&gt;/**</text>
+<rect x="220" y="266" width="288" height="52" rx="8" fill="#f6f8fa" stroke="#d1d9e0" stroke-width="1"/>
+<text x="234" y="288" font-size="15" fill="#1f2328" text-anchor="start" font-weight="600">audit-sink</text>
+<text x="234" y="308" font-size="14" fill="#59636e" text-anchor="start">observes your slot · metrics only</text>
+<line x1="186" y1="224" x2="218" y2="224" stroke="#818b98" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="364" y1="253" x2="364" y2="263" stroke="#818b98" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="44" y="342" width="480" height="124" rx="10" fill="#ffffff" stroke="#818b98" stroke-width="1" stroke-dasharray="5 4"/>
+<text x="58" y="362" font-size="13" fill="#59636e" text-anchor="start">on the host (systemd)</text>
+<rect x="60" y="372" width="214" height="80" rx="8" fill="#f6f8fa" stroke="#d1d9e0" stroke-width="1"/>
+<text x="74" y="396" font-size="15" fill="#1f2328" text-anchor="start" font-weight="600" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">goat-cli</text>
+<text x="74" y="418" font-size="14" fill="#1f2328" text-anchor="start">doctor · pub · sub · health</text>
+<text x="74" y="439" font-size="14" fill="#59636e" text-anchor="start">goat-doctor timer</text>
+<rect x="290" y="372" width="218" height="80" rx="8" fill="#f6f8fa" stroke="#d1d9e0" stroke-width="1"/>
+<text x="304" y="396" font-size="15" fill="#1f2328" text-anchor="start" font-weight="600">mesh client</text>
+<text x="304" y="418" font-size="14" fill="#1f2328" text-anchor="start">NetBird</text>
+<text x="304" y="439" font-size="14" fill="#59636e" text-anchor="start">kernel WireGuard</text>
+<rect x="664" y="92" width="192" height="392" rx="12" fill="#f6f8fa" stroke="#818b98" stroke-width="1.5"/>
+<text x="680" y="122" font-size="16" fill="#1f2328" text-anchor="start" font-weight="600">goat data fabric</text>
+<text x="680" y="144" font-size="14" fill="#59636e" text-anchor="start">zagros sandbox</text>
+<rect x="672" y="164" width="176" height="132" rx="8" fill="#ffffff" stroke="#d1d9e0" stroke-width="1"/>
+<text x="682" y="188" font-size="13" fill="#1f2328" text-anchor="start" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">goat machine enroll</text>
+<text x="684" y="212" font-size="14" fill="#59636e" text-anchor="start">mints:</text>
+<text x="684" y="234" font-size="14" fill="#1f2328" text-anchor="start">your slot (a UUID)</text>
+<text x="684" y="255" font-size="14" fill="#1f2328" text-anchor="start">mTLS identity</text>
+<text x="684" y="276" font-size="14" fill="#1f2328" text-anchor="start">one-use setup key</text>
+<text x="680" y="330" font-size="14" fill="#59636e" text-anchor="start">The owner of this</text>
+<text x="680" y="350" font-size="14" fill="#59636e" text-anchor="start">environment controls:</text>
+<text x="680" y="378" font-size="14" fill="#1f2328" text-anchor="start">· enrollment</text>
+<text x="680" y="399" font-size="14" fill="#1f2328" text-anchor="start">· access rules</text>
+<text x="680" y="420" font-size="14" fill="#1f2328" text-anchor="start">· what data may</text>
+<text x="689" y="441" font-size="14" fill="#1f2328" text-anchor="start">leave the pod</text>
+<text x="604" y="112" font-size="13" fill="#59636e" text-anchor="middle">signed bundle</text>
+<text x="604" y="128" font-size="13" fill="#59636e" text-anchor="middle">+ setup key</text>
+<line x1="662" y1="142" x2="546" y2="142" stroke="#818b98" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
+<text x="604" y="180" font-size="13" fill="#1f2328" text-anchor="middle" font-weight="600">publish</text>
+<text x="604" y="198" font-size="13" fill="#1f2328" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">&lt;slot_id&gt;/**</text>
+<line x1="510" y1="214" x2="661" y2="214" stroke="#0969da" stroke-width="2.5" marker-end="url(#arrow)"/>
+<line x1="662" y1="240" x2="511" y2="240" stroke="#0969da" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="604" y="264" font-size="13" fill="#1f2328" text-anchor="middle" font-weight="600">subscribe</text>
+<text x="604" y="282" font-size="13" fill="#1f2328" text-anchor="middle">inbound prefix</text>
+<line x1="510" y1="412" x2="662" y2="412" stroke="#818b98" stroke-width="4"/>
+<text x="604" y="400" font-size="13" fill="#59636e" text-anchor="middle">WireGuard mesh</text>
+<text x="604" y="434" font-size="13" fill="#59636e" text-anchor="middle">both flows</text>
+<text x="604" y="450" font-size="13" fill="#59636e" text-anchor="middle">ride this tunnel</text>
+<text x="24" y="512" font-size="14" fill="#59636e" text-anchor="start">Inbound prefix: release/goat/** under a bilateral grant; on the sandbox, your own slot until one exists.</text>
+</svg>

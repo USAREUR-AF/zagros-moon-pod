@@ -1,5 +1,10 @@
 # zagros-moon-pod
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/moon-pod-dark.svg">
+  <img src="docs/figures/moon-pod-light.svg" width="760" alt="On a host you run, your applications publish and subscribe through a Zenoh router with mTLS that may write only your slot, watched by an observe-only audit-sink; the router publishes your slot to the zagros sandbox fabric and receives your inbound prefix over a WireGuard mesh, while the environment owner mints the slot, identity and setup key and controls what data may leave the pod.">
+</picture>
+
 The **moon-pod** — a minimal software bundle that joins a goat data fabric from a host its
 operator runs, and exchanges data with it in both directions. Read
 [Status](#status-what-a-moon-pod-is-today) first: it says what a moon-pod is used for today and
