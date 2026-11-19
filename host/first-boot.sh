@@ -41,6 +41,9 @@ for t in goat envsubst docker openssl timeout cmp mktemp sha256sum; do
   command -v "$t" >/dev/null 2>&1 || { echo "required tool not found on PATH: $t"; exit 2; }
 done
 command -v goat-clientd >/dev/null 2>&1 || echo "warning: goat-clientd not on PATH — mesh step [3/6] will be skipped"
+# goat-pod-api (ADR 1251 pod carriage) is optional: without it, or without the portal signer
+# certificate in the profile, the pod carries only its own slot, as before.
+: "${POD_API_BIN:=$(command -v goat-pod-api 2>/dev/null || true)}"
 
 # shellcheck disable=SC1090
 source "$PROFILE_ENV"
@@ -361,6 +364,7 @@ export POD_CERT_PEM="/etc/zenoh/tls/pod-cert.pem"   # in-container paths (compos
 export POD_KEY_PEM="/etc/zenoh/tls/pod-key.pem"
 export CA_ROOTS_PEM="/etc/zenoh/tls/ca-roots.pem"
 CONFIG_OUT="${POD_STATE_DIR}/zenoh/config.json5"
+BASE_CONFIG_OUT="${ZENOH_STATE_DIR}/config.base.json5"
 CONFIG_APPLIED_SHA_FILE="${ZENOH_STATE_DIR}/.config.applied.sha256"
 LAST_GOOD_CONFIG="${ZENOH_STATE_DIR}/config.last-known-good.json5"
 LAST_GOOD_IDENTITIES="${ZENOH_STATE_DIR}/.config.last-known-good.identities"
@@ -372,6 +376,72 @@ write_identity_pair() {
   temporary="$(mktemp "${path}.tmp.XXXXXX")"
   chmod 600 "${temporary}"
   printf '%s\n%s\n' "${pod_cn}" "${fabric_cn}" >"${temporary}"
+  mv "${temporary}" "${path}"
+}
+
+# One JSON string; refuses characters that would need escaping, so a profile value cannot
+# change the structure of the file.
+json_string() {
+  case "$1" in
+    *'"'*|*\\*|*[[:cntrl:]]*) echo "profile value contains a quote or backslash: $1" >&2; return 1;;
+  esac
+  printf '"%s"' "$1"
+}
+
+# goat-pod-api configuration, from the profile and the paths first-boot uses (host paths).
+write_pod_api_config() {
+  local path="$1" listen="" addr temporary health=false
+  local slot state url ca signer cert key roots fabric page base live good applied profile
+  for addr in ${POD_API_LISTEN:-127.0.0.1:8447}; do
+    addr="$(json_string "${addr}")" || return 1
+    listen="${listen:+${listen}, }${addr}"
+  done
+  [ "${POD_API_HEALTH_PUBLISH:-0}" = 1 ] && health=true
+  [ -f "${POD_API_SIGNER_CERT}" ] || {
+    echo "POD_API_SIGNER_CERT names a file that does not exist: ${POD_API_SIGNER_CERT}" >&2
+    return 1
+  }
+  slot="$(json_string "${POD_SLOT:-${PARTNER_NAMESPACE}}")" || return 1
+  state="$(json_string "${POD_STATE_DIR}/pod-api")" || return 1
+  url="$(json_string "${POD_API_PORTAL_URL:-}")" || return 1
+  ca="$(json_string "${POD_API_PORTAL_CA:-}")" || return 1
+  signer="$(json_string "${POD_API_SIGNER_CERT}")" || return 1
+  cert="$(json_string "${ZENOH_TLS_DIR}/pod-cert.pem")" || return 1
+  key="$(json_string "${ZENOH_TLS_DIR}/pod-key.pem")" || return 1
+  roots="$(json_string "${ZENOH_TLS_DIR}/ca-roots.pem")" || return 1
+  fabric="$(json_string "${FABRIC_ROUTER_CERT_CN}")" || return 1
+  page="$(json_string "${POD_API_GATEPOST_PAGE:-/usr/local/share/goat-pod-api/gatepost.html}")" || return 1
+  base="$(json_string "${BASE_CONFIG_OUT}")" || return 1
+  live="$(json_string "${CONFIG_OUT}")" || return 1
+  good="$(json_string "${LAST_GOOD_CONFIG}")" || return 1
+  applied="$(json_string "${CONFIG_APPLIED_SHA_FILE}")" || return 1
+  profile="$(json_string "${GOAT_PROFILE_DIR}")" || return 1
+  install -d -m 0700 "$(dirname "${path}")"
+  temporary="$(mktemp "${path}.tmp.XXXXXX")"
+  chmod 600 "${temporary}"
+  cat > "${temporary}" <<EOF_POD_API
+{
+  "pod_slot": ${slot},
+  "state_dir": ${state},
+  "portal_url": ${url},
+  "portal_ca": ${ca},
+  "portal_signer_cert": ${signer},
+  "pod_cert": ${cert},
+  "pod_key": ${key},
+  "ca_roots": ${roots},
+  "listen": [${listen}],
+  "fabric_router_cn": ${fabric},
+  "gatepost_page": ${page},
+  "router": {
+    "base_config": ${base},
+    "config": ${live},
+    "last_good": ${good},
+    "applied_sha_file": ${applied},
+    "container": "goat-moon-zenoh-router"
+  },
+  "health_publish": {"enabled": ${health}, "env": {"GOAT_PROFILE_DIR": ${profile}}}
+}
+EOF_POD_API
   mv "${temporary}" "${path}"
 }
 
@@ -398,6 +468,23 @@ envsubst \
   '${ZENOH_LISTEN_PORT} ${POD_ROUTER_ZID} ${ZENOH_FABRIC_ENDPOINT} ${PARTNER_NAMESPACE} ${INBOUND_NAMESPACE} ${POD_CERT_CN} ${FABRIC_ROUTER_CERT_CN} ${POD_CERT_PEM} ${POD_KEY_PEM} ${CA_ROOTS_PEM}' \
   < "${ZENOH_ROUTER_TEMPLATE}" \
   > "${CONFIG_TMP}"
+# The template rendering is the base goat-pod-api adds carried sources to (ADR 1251).
+install -m 600 "${CONFIG_TMP}" "${BASE_CONFIG_OUT}"
+POD_API_CONFIG="${POD_STATE_DIR}/pod-api/config.json"
+POD_API_ENABLED=0
+if [ -n "${POD_API_BIN}" ] && [ -n "${POD_API_SIGNER_CERT:-}" ]; then
+  write_pod_api_config "${POD_API_CONFIG}" || exit 2
+  POD_API_ENABLED=1
+  echo "    adding carried sources to the router config (goat-pod-api)"
+  if ! "${POD_API_BIN}" render --config "${POD_API_CONFIG}" --out "${CONFIG_TMP}"; then
+    echo "    warning: goat-pod-api could not render carried sources; the router config"
+    echo "    carries only this pod's own slot until goat-pod-api applies its rules."
+    install -m 600 "${BASE_CONFIG_OUT}" "${CONFIG_TMP}"
+  fi
+elif [ -n "${POD_API_BIN}" ]; then
+  echo "    goat-pod-api is installed but POD_API_SIGNER_CERT is not set in the profile;"
+  echo "    the pod carries only its own slot (docs/devices-behind-a-pod.md)."
+fi
 if [ ! -f "${CONFIG_OUT}" ] || ! cmp -s "${CONFIG_TMP}" "${CONFIG_OUT}"; then
   if [ "${CONFIG_WAS_APPLIED}" -eq 1 ]; then
     install -m 600 "${CONFIG_OUT}" "${LAST_GOOD_CONFIG}"
@@ -601,16 +688,20 @@ record_applied_config "${CONFIG_SHA}"
 echo "    audit sink metrics:"
 echo "      curl -s --max-time 5 http://127.0.0.1:9303/metrics | grep ^goat_audit_"
 
-# --- [6/6] Install the host goat-doctor probe timer (goat-cli, no container) ---------------------
+# --- [6/6] Install the host services: goat-doctor probe timer, goat-pod-api ---------------------
 # goat presence was hard-checked at the top of the script. systemd is NOT guaranteed: a
 # container, a chroot, or a minimal host has no systemctl (or has the binary with no running
 # systemd), and dying here under `set -e` would exit non-zero with the data plane already up.
 # Guard like step [3/6]: detect, skip loudly, leave the manual path on screen.
-echo "==> [6/6] installing goat-doctor host timer"
+echo "==> [6/6] installing host services (goat-doctor timer, goat-pod-api)"
 if ! command -v systemctl >/dev/null 2>&1 || [ ! -d "${SYSTEMD_RUNTIME_DIR}" ]; then
   echo "    skipped (no running systemd on this host). The data plane is up; run the health"
   echo "    probe manually or from your own scheduler:"
   echo "      GOAT_PROFILE_DIR=${GOAT_PROFILE_DIR} ${POD_DIR}/host/goat-doctor.sh"
+  if [ "${POD_API_ENABLED}" = 1 ]; then
+    echo "    run the carriage service from your own supervisor:"
+    echo "      ${POD_API_BIN} serve --config ${POD_API_CONFIG}"
+  fi
 else
   DOCTOR_SH="${POD_DIR}/host/goat-doctor.sh"
   # Render the unit with the real script path + profile dir + pod state dir (honors a custom
@@ -625,6 +716,18 @@ else
   systemctl enable --now goat-doctor.timer
   echo "    goat-doctor.timer enabled"
   echo "    status blob: ${POD_STATE_DIR}/doctor/status.json"
+  if [ "${POD_API_ENABLED}" = 1 ]; then
+    # shellcheck disable=SC2016  # envsubst takes the variable names literally
+    POD_API_BIN="${POD_API_BIN}" POD_API_CONFIG="${POD_API_CONFIG}" POD_STATE_DIR="${POD_STATE_DIR}" \
+      envsubst '${POD_API_BIN} ${POD_API_CONFIG} ${POD_STATE_DIR}' \
+      < "${POD_DIR}/host/goat-pod-api.service.example" \
+      > "${SYSTEMD_UNIT_DIR}/goat-pod-api.service"
+    systemctl daemon-reload
+    systemctl enable goat-pod-api.service
+    # Restart so a changed configuration or binary takes effect.
+    systemctl restart goat-pod-api.service
+    echo "    goat-pod-api enabled; status: goat pod status (or curl the local API)"
+  fi
 fi
 
 echo "==> first-boot complete."

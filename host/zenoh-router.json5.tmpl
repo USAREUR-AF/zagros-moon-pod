@@ -20,6 +20,11 @@
 //   ${POD_CERT_PEM}           pod leaf cert  (from goat profile init: mtls.cert.pem)
 //   ${POD_KEY_PEM}            pod leaf key   (from goat profile init: mtls.key.pem)
 //   ${CA_ROOTS_PEM}           CA roots       (from goat profile init: ca-roots.pem) — from the BUNDLE
+//
+// Carriage markers: the three `// @carriage-…` lines below mark where goat-pod-api inserts the
+// rules, subjects and policies for the sources this pod may carry (ADR 1251, rendered from the
+// pod's signed rule generation and its local rules). They are comments, so a config rendered
+// without goat-pod-api is valid and carries no other source. Keep each marker on its own line.
 {
   id: "${POD_ROUTER_ZID}",
   mode: "router",
@@ -116,6 +121,7 @@
         permission: "allow",
         key_exprs: ["**"],
       },
+      // @carriage-rules
     ],
     subjects: [
       {
@@ -130,12 +136,14 @@
         cert_common_names: ["${FABRIC_ROUTER_CERT_CN}"],
         link_protocols: ["tls", "quic"],
       },
+      // @carriage-subjects
     ],
     policies: [
       { rules: ["pod-firstparty"], subjects: ["pod-peer", "fabric-peer"] },
       { rules: ["pod-inbound-local-interest", "pod-inbound-local-delivery"], subjects: ["pod-peer"] },
       { rules: ["pod-inbound-fabric-data", "pod-inbound-fabric-interest"], subjects: ["fabric-peer"] },
       { rules: ["fabric-interest"], subjects: ["fabric-peer"] },
+      // @carriage-policies
     ],
   },
 }

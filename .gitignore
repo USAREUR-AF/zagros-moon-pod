@@ -11,6 +11,8 @@ profiles/*-local/
 /target
 *.log
 /.router-forwarding.*/
+/.pod-carriage.*/
+/.goatcore/
 
 # python (the examples are runnable)
 __pycache__/
