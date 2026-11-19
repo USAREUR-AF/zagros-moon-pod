@@ -22,6 +22,12 @@ both mTLS, and asserts:
   the router denies a pod-local `**` declaration and does not propagate it upstream. Only the
   authenticated fabric peer may declare broad interest.
 
+`tests/duplicate-delivery-local.sh` measures, rather than asserts, how many times one publication
+reaches a subscriber on the core when the publisher has two live paths: a client given two pods,
+a peer-mode session connected to a pod and the core, and a peer-mode session connected to two pods.
+The two pods sit on separate Docker networks and each admits the device certificate as the writer
+of its slot. It fails only when the one-path control is not exactly once per publication.
+
 `tests/fabric-peer-identity-local.sh` also exercises the exact certificate-discovery helper sourced
 by first-boot: CA verification, TLS pin matching, endpoint parsing, safe CNs, and distinct pod/router
 identities. `.github/workflows/router-forwarding.yml` runs both gates in CI. The separate
