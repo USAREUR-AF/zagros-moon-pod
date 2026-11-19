@@ -28,6 +28,7 @@ The workflows in `.github/workflows/` run these; most need Docker:
 bash tests/audit-sink-local.sh
 bash tests/fabric-peer-identity-local.sh
 bash tests/router-forwarding-local.sh
+bash tests/duplicate-delivery-local.sh   # a measurement: delivery count over two live paths
 bash tests/check-images-public.sh
 ```
 

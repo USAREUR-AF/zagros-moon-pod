@@ -1,0 +1,29 @@
+name: duplicate-delivery
+
+# Measures how many times one publication reaches a core subscriber when the publisher has two
+# live paths (two pods, or a pod and the core). A measurement, not a gate: it fails only when the
+# one-path control case is not exactly once per publication.
+on:
+  pull_request:
+    paths:
+      - host/zenoh-router.json5.tmpl
+      - host/fabric-peer-identity.sh
+      - tests/duplicate-delivery-local.sh
+      - .github/workflows/duplicate-delivery.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  duplicate-delivery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Runner CPU
+        run: |
+          lscpu | grep -E 'Model name|^CPU\(s\)'
+          docker version --format 'docker {{.Server.Version}}'
+      - name: Delivery count per publication over two live paths
+        run: N=1000 RUNS=3 bash tests/duplicate-delivery-local.sh duplicate-delivery.json && cat duplicate-delivery.json
