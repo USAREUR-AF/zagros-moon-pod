@@ -380,6 +380,7 @@ assert c["router"]["base_config"] == work + "/state/zenoh/config.base.json5"
 assert c["router"]["config"] == work + "/state/zenoh/config.json5"
 assert c["router"]["container"] == "goat-moon-zenoh-router"
 assert c["fabric_router_cn"] == "fabric-router", c["fabric_router_cn"]
+assert c["portal_token_file"].endswith("/contexts/default/portal.token"), c["portal_token_file"]
 PY
 grep -q "^render --config $POD_API_CONFIG --out " "$WORK/pod-api-calls" \
     || { echo "FAIL: first-boot did not render through goat-pod-api" >&2; exit 1; }

@@ -391,7 +391,7 @@ json_string() {
 # goat-pod-api configuration, from the profile and the paths first-boot uses (host paths).
 write_pod_api_config() {
   local path="$1" listen="" addr temporary health=false
-  local slot state url ca signer cert key roots fabric page base live good applied profile
+  local slot state url ca token signer cert key roots fabric page base live good applied profile
   for addr in ${POD_API_LISTEN:-127.0.0.1:8447}; do
     addr="$(json_string "${addr}")" || return 1
     listen="${listen:+${listen}, }${addr}"
@@ -405,6 +405,8 @@ write_pod_api_config() {
   state="$(json_string "${POD_STATE_DIR}/pod-api")" || return 1
   url="$(json_string "${POD_API_PORTAL_URL:-}")" || return 1
   ca="$(json_string "${POD_API_PORTAL_CA:-}")" || return 1
+  # The pod's portal API key stays in the goat profile; the config names the file only.
+  token="$(json_string "${CTX_DIR}/portal.token")" || return 1
   signer="$(json_string "${POD_API_SIGNER_CERT}")" || return 1
   cert="$(json_string "${ZENOH_TLS_DIR}/pod-cert.pem")" || return 1
   key="$(json_string "${ZENOH_TLS_DIR}/pod-key.pem")" || return 1
@@ -425,6 +427,7 @@ write_pod_api_config() {
   "state_dir": ${state},
   "portal_url": ${url},
   "portal_ca": ${ca},
+  "portal_token_file": ${token},
   "portal_signer_cert": ${signer},
   "pod_cert": ${cert},
   "pod_key": ${key},

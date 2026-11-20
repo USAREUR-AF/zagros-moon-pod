@@ -266,7 +266,7 @@ slot when the pod's signed rule generation carries it. goat-pod-api, a host serv
 
 | Step | What happens |
 |---|---|
-| Pull | Every minute it fetches `GET /api/carriage/pods/<pod-slot>/generation` from the portal with the pod's certificate |
+| Pull | Every minute it fetches `GET /api/carriage/pods/<pod-slot>/generation` from the portal with the pod's portal API key (the goat profile's `portal.token`, issued at enrollment) |
 | Verify | It checks the signature against the portal signer certificate named in the profile (`POD_API_SIGNER_CERT`) and refuses a generation lower than the one it holds |
 | Render | It inserts the entries below at the three markers of `config.base.json5` (first-boot's template rendering) and leaves every other line unchanged |
 | Apply | It writes `config.json5`, restarts the router container (zenohd 1.9 loads an ACL change only on restart), waits for health, and restores the last known good file on failure |
