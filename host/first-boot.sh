@@ -475,6 +475,20 @@ envsubst \
 install -m 600 "${CONFIG_TMP}" "${BASE_CONFIG_OUT}"
 POD_API_CONFIG="${POD_STATE_DIR}/pod-api/config.json"
 POD_API_ENABLED=0
+# Install the pinned goat-pod-api release (host/goat-pod-api.pin): signature and digests are
+# checked before anything is installed, and a failed check stops first-boot. POD_API_INSTALL=0
+# keeps a build already on PATH instead.
+if [ -n "${POD_API_SIGNER_CERT:-}" ] && [ "${POD_API_INSTALL:-1}" = 1 ]; then
+  echo "    installing the pinned goat-pod-api release"
+  install_status=0
+  "${POD_DIR}/host/install-goat-pod-api.sh" "${POD_DIR}/host/goat-pod-api.pin" || install_status=$?
+  case "${install_status}" in
+    0) POD_API_BIN="${GOAT_POD_API_BIN_DIR:-/usr/local/bin}/goat-pod-api" ;;
+    3) echo "    no goat-pod-api release is pinned; using goat-pod-api from PATH if present" ;;
+    *) echo "goat-pod-api was not installed; the router config and services were not changed." >&2
+       exit 1 ;;
+  esac
+fi
 if [ -n "${POD_API_BIN}" ] && [ -n "${POD_API_SIGNER_CERT:-}" ]; then
   write_pod_api_config "${POD_API_CONFIG}" || exit 2
   POD_API_ENABLED=1

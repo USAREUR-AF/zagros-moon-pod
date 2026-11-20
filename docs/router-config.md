@@ -298,7 +298,14 @@ Enable it with two profile settings, then re-run first-boot:
 | `POD_API_PORTAL_URL` | the portal base URL; empty runs the pod on its last generation and local rules |
 | `POD_API_LISTEN` | where the local API listens (default `127.0.0.1:8447`; add the pod's mesh address) |
 
-first-boot writes `${POD_STATE_DIR}/pod-api/config.json`, renders the router config through
+first-boot installs the goat-pod-api release pinned in `host/goat-pod-api.pin` with
+`host/install-goat-pod-api.sh`: it checks that `SHA256SUMS` has the pinned digest, that cosign
+verifies its signature as goatcore's `goat-pod-api-release.yml` for exactly the pinned tag, and that
+the binary and `gatepost.html` have the digests it lists, and installs them to `/usr/local/bin` and
+`/usr/local/share/goat-pod-api/` only then; any mismatch stops first-boot before the router config
+changes. The host needs `cosign`. No release is pinned yet; until one is, first-boot uses a
+`goat-pod-api` already on `PATH` (`POD_API_INSTALL=0` keeps such a build even once a release is
+pinned). It then writes `${POD_STATE_DIR}/pod-api/config.json`, renders the router config through
 `goat-pod-api render`, and installs `goat-pod-api.service`. Without goat-pod-api on the host, or
 without `POD_API_SIGNER_CERT`, the pod carries only its own slot, as before.
 

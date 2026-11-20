@@ -45,6 +45,8 @@ jobs:
           go-version: '1.26.11'
           cache: false
       - name: Shellcheck
-        run: shellcheck -x tests/pod-carriage-local.sh
+        run: shellcheck -x tests/pod-carriage-local.sh tests/pod-api-install-local.sh host/install-goat-pod-api.sh
+      - name: The goat-pod-api installer verifies the pin, the signature and every digest
+        run: bash tests/pod-api-install-local.sh
       - name: Carried device publishes under its own slot; uncovered device refused
         run: GOATCORE_DIR="$PWD/.goatcore" bash tests/pod-carriage-local.sh

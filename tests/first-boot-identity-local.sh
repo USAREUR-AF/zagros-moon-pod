@@ -19,7 +19,8 @@ cp "$FIRST_BOOT_SCRIPT" "$ROOT/host/zenoh-router.json5.tmpl" \
     "$ROOT/host/secure-remove.sh" \
     "$ROOT/host/goat-doctor.service.example" \
     "$ROOT/host/goat-doctor.timer.example" \
-    "$ROOT/host/goat-pod-api.service.example" "$REPO/host/"
+    "$ROOT/host/goat-pod-api.service.example" \
+    "$ROOT/host/install-goat-pod-api.sh" "$ROOT/host/goat-pod-api.pin" "$REPO/host/"
 : > "$WORK/bundle.cbor"
 
 cat > "$BIN/id" <<'EOF'
@@ -382,6 +383,8 @@ assert c["router"]["container"] == "goat-moon-zenoh-router"
 assert c["fabric_router_cn"] == "fabric-router", c["fabric_router_cn"]
 assert c["portal_token_file"].endswith("/contexts/default/portal.token"), c["portal_token_file"]
 PY
+grep -q 'no goat-pod-api release is pinned; using goat-pod-api from PATH' "$WORK/pod-api.out" \
+    || { echo "FAIL: an unpinned release did not fall back to goat-pod-api on PATH" >&2; exit 1; }
 grep -q "^render --config $POD_API_CONFIG --out " "$WORK/pod-api-calls" \
     || { echo "FAIL: first-boot did not render through goat-pod-api" >&2; exit 1; }
 grep -q 'rendered-by-goat-pod-api' "$WORK/state/zenoh/config.json5" \
