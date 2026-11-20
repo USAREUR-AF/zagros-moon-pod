@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zagros-moon-pod</title>
+<meta name="description" content="A small software bundle you run on your own host to join a goat data fabric and exchange data with it in both directions. Used today to learn.">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#top"><img src="assets/icon.svg" width="28" height="28" alt="">zagros-moon-pod</a>
+    <nav aria-label="Sections">
+      <a href="#what">What it is</a><a href="#contract">Contract</a><a href="#start">Start</a>
+      <a class="gh" href="https://github.com/USAREUR-AF/zagros-moon-pod">GitHub</a>
+    </nav>
+  </header>
+</div>
+
+<main id="top">
+<section class="hero" aria-labelledby="name">
+<pre class="bgcode" aria-hidden="true">access_control: {
+  enabled: true,
+  default_permission: "deny",
+  rules: [
+    {
+      id: "pod-firstparty",
+      messages: ["put", "delete", "declare_subscriber", "query", ...],
+      flows: ["egress", "ingress"],
+      permission: "allow",
+      key_exprs: ["${PARTNER_NAMESPACE}/**"],
+    },
+    {
+      id: "pod-inbound-fabric-data",
+      messages: ["put", "declare_queryable", "reply", "liveliness_token"],
+      flows: ["ingress"],
+      permission: "allow",
+      key_exprs: ["${INBOUND_NAMESPACE}/**"],
+    },</pre>
+  <div class="wrap hero-grid">
+    <div>
+      <p class="prompt">&gt;_ sudo bash moon_pod_setup.sh<span class="cur" aria-hidden="true"></span></p>
+      <h1 class="wordmark" id="name">zagros-moon-pod</h1>
+      <p class="tagline">A small bundle you run on your own host to exchange data with a goat fabric, both ways.</p>
+      <p class="lede">A Zenoh router with mutual TLS that may write only your slot, an observe-only audit sink, and a mesh client on the host. Today it is for learning: rung 2 of the goat learner ladder, joined to the zagros sandbox, not in operational use.</p>
+      <div class="buttons">
+        <a class="btn star" href="https://github.com/USAREUR-AF/zagros-moon-pod"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.3L12 17.3l-5.7 3 1.1-6.3-4.6-4.5 6.4-.9z"/></svg>Star on GitHub</a>
+        <a class="btn" href="#start">Getting started</a>
+        <a class="btn" href="https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/docs/partner-contract.md">Partner contract</a>
+      </div>
+      <div class="cmd"><pre><span class="dollar">$ </span><code id="c-setup">cd zagros-moon-pod &amp;&amp; sudo bash moon_pod_setup.sh</code></pre><button class="copy" type="button" data-copy="c-setup">Copy</button></div>
+    </div>
+
+    <div class="pod" role="img" aria-label="What crosses the pod router, in the cases tests/router-forwarding-local.sh asserts on every pull request: the fabric router's subscription to */** is accepted as interest only; a put to the pod's slot reaches the fabric under rule pod-firstparty; puts to outside/test/blocked and into the inbound release/goat namespace from the pod, and a put into the slot by another identity, are denied by the default; a put from the fabric to release/goat/test/pong reaches the pod's app under rule pod-inbound-fabric-data.">
+      <div class="pod-head"><span><b>pod router</b> access control</span><span id="case">default deny</span></div>
+      <svg class="flow" id="flow" viewBox="0 0 520 286" aria-hidden="true">
+        <text class="lbl" id="now" x="260" y="20" text-anchor="middle"></text>
+        <text id="verdict" x="260" y="40" text-anchor="middle"></text>
+        <g transform="translate(0 30)">
+        <path class="mesh" d="M336 120 H 392"/>
+        <text x="364" y="146" text-anchor="middle">mesh</text>
+        <rect class="box" x="10" y="44" width="112" height="70" rx="6"/><text class="t" x="66" y="88" text-anchor="middle">your app</text><text x="66" y="104" text-anchor="middle">pod identity</text>
+        <rect class="box" x="10" y="186" width="112" height="56" rx="6"/><text class="t" x="66" y="214" text-anchor="middle">another app</text><text x="66" y="230" text-anchor="middle">other identity</text>
+        <rect class="router" x="196" y="40" width="140" height="210" rx="8"/><text class="t" x="266" y="200" text-anchor="middle">pod router</text><text x="266" y="217" text-anchor="middle" id="zv">zenoh, mTLS</text><text x="266" y="236" text-anchor="middle">default: deny</text>
+        <rect class="box" x="392" y="44" width="118" height="150" rx="6"/><text class="t" x="451" y="170" text-anchor="middle">fabric</text><text x="451" y="186" text-anchor="middle">router</text>
+        <g id="pk"></g>
+        </g>
+      </svg>
+<pre class="log" id="log">pod    put &lt;slot&gt;/test/ping              <span class="ok">allow</span>
+pod    put outside/test/blocked           <span class="no">deny</span>
+fabric put release/goat/test/pong         <span class="ok">allow</span></pre>
+      <div class="foot" id="foot">The cases <code>tests/router-forwarding-local.sh</code> asserts on every pull request, against two real Zenoh routers. Rules from <code>host/zenoh-router.json5.tmpl</code>.</div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="numbers">
+      <div><span class="n" data-measure="containers">2</span><span class="l">containers: router and audit sink</span><code>services in compose/docker-compose.yml</code></div>
+      <div><span class="n" data-measure="rules">6</span><span class="l">allow rules over a default deny</span><code>access_control.rules in host/zenoh-router.json5.tmpl</code></div>
+      <div><span class="n" data-measure="sdks">6</span><span class="l">client SDK languages</span><code>ls clients/connect</code></div>
+      <div><span class="n" data-measure="requirements">7</span><span class="l">requirements at the boundary</span><code>docs/partner-contract.md</code></div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="what">
+  <div class="wrap">
+    <h2>What it is</h2>
+    <div class="status">
+      <p><strong>Used only to learn.</strong> A moon-pod joins an environment someone else runs. That environment's owner controls enrollment, the access rules, and what data may leave the pod.</p>
+      <p>It is not a sovereignty guarantee. A party that needs sovereignty runs its own environment and federates with others across a boundary.</p>
+    </div>
+    <div class="cards">
+      <div class="card"><h3>You run it</h3><p>On your own hardware, Apache-2.0, yours to read, log and fork. The mesh client runs on the host for kernel WireGuard and boot persistence; the router and the audit sink run in a small compose bundle on host networking.</p></div>
+      <div class="card"><h3>It writes only your slot</h3><p>Enrollment mints a slot, an mTLS identity and a single-use setup key in one act. The router's access control is default-deny: your apps publish and subscribe under <code>&lt;slot&gt;/**</code>, and the fabric sends you data on your inbound prefix.</p></div>
+      <div class="card"><h3>Everything that crosses is observed</h3><p>The audit sink subscribes to your namespace and exposes metrics, observe-only. A durable local log on your encrypted volume is the designed next step; until then retention is a step you own.</p></div>
+    </div>
+    <figure style="margin:36px auto 0;max-width:820px">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/from-tree/moon-pod-dark.svg">
+        <img src="assets/from-tree/moon-pod-light.svg" width="760" alt="On a host you run, your applications publish and subscribe through a Zenoh router with mTLS that may write only your slot, watched by an observe-only audit-sink; the router publishes your slot to the zagros sandbox fabric and receives your inbound prefix over a WireGuard mesh, while the environment owner mints the slot, identity and setup key and controls what data may leave the pod.">
+      </picture>
+      <figcaption>Drawn by <code>docs/figures/make-figures.py</code> from <code>compose/docker-compose.yml</code> and <code>clients/connect/</code>.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="band" id="contract">
+  <div class="wrap feature">
+    <div>
+      <h2>The contract at the boundary</h2>
+      <p>What a pod meets where it touches the fabric, written self-contained in <a href="https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/docs/partner-contract.md"><code>docs/partner-contract.md</code></a>, with the custody floor and how the goat side receives a pod's data.</p>
+      <p>zagros is a sandbox goatnet for rapid onboarding. None of the sandbox shape is the production shape; <a href="https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/docs/zagros-vs-production.md">zagros-vs-production.md</a> lists the differences.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>#</th><th>Requirement</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Identity assurance from a standards-compliant identity provider</td></tr>
+        <tr><td>2</td><td>Transport encryption with keys neither side delegates; WireGuard preferred</td></tr>
+        <tr><td>3</td><td>Data in and out at well-known Zenoh keys under the pod's namespace</td></tr>
+        <tr><td>4</td><td>The partner keeps 90 or more days of access logs</td></tr>
+        <tr><td>5</td><td>Every published topic declares its schema</td></tr>
+        <tr><td>6</td><td>Custody floor: data, identity and audit stay on the partner's side</td></tr>
+        <tr><td>7</td><td>Reversible: move to your own plane without re-onboarding</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="band" id="start">
+  <div class="wrap">
+    <h2>Getting started</h2>
+    <p class="sub">The reference host is Ubuntu 24.04 LTS. The setup script is one re-runnable menu: bring-up, stand-up and verify. Nothing runs until you confirm, and the setup key is never put on a command line.</p>
+    <pre class="block">git clone https://github.com/USAREUR-AF/zagros-moon-pod
+cd zagros-moon-pod
+sudo bash moon_pod_setup.sh     # choose "Configure inputs", then Part 1, 2 or 3</pre>
+    <p><a href="https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/docs/partner-run-guide.md">Partner run guide</a> &middot; <a href="https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/docs/pod-host-bringup.md">Host bring-up</a> &middot; <a href="https://github.com/USAREUR-AF/zagros-moon-pod/tree/main/clients">Client SDKs</a> &middot; <a href="https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/docs/architecture.md">Architecture</a></p>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><a href="https://github.com/USAREUR-AF/zagros-moon-pod">Repository</a><a href="https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/LICENSE">Apache License 2.0</a><a href="https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/SECURITY.md">Security policy</a></p>
+    <p>Part of <a href="https://github.com/USAREUR-AF/goatcore">goat</a>.</p>
+  </div>
+</footer>
+<script src="assets/hero.js" defer></script>
+</body>
+</html>
