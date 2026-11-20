@@ -1,0 +1,25 @@
+# moon-pod — pod carriage runtime (goat-pod-api, ADR 1251).
+# Installed + enabled by first-boot.sh when goat-pod-api is on PATH and the profile sets
+# POD_API_SIGNER_CERT; first-boot renders ${POD_API_BIN}, ${POD_API_CONFIG} and ${POD_STATE_DIR}
+# via envsubst. It pulls the pod's signed rule generation, applies the router ACL (restarting the
+# router container, with last-known-good rollback), keeps the local-rule ledger, and serves the
+# local API and the Gatepost page. It runs as root because it restarts the router container.
+
+[Unit]
+Description=moon-pod carriage runtime (goat-pod-api)
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+ExecStart=${POD_API_BIN} serve --config ${POD_API_CONFIG}
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=${POD_STATE_DIR}
+
+[Install]
+WantedBy=multi-user.target

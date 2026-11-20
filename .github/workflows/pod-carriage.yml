@@ -1,0 +1,50 @@
+name: pod-carriage
+
+# ADR 1251 pod carriage, end to end: goat-pod-api (built from goatcore ops/goat-pod-api) adopts a
+# generation this test signs, renders the pod router ACL and restarts a real zenohd 1.9.0; a
+# carried device publishes under its own slot, an uncovered device is refused, and a local rule
+# from the pod's local authority admits a device.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pod-carriage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Choose the goatcore ref
+        id: goatcore
+        # A goatcore branch with the same name as this pull request's branch is built when it
+        # exists, so a change spanning both repositories is tested together.
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          ref=integration/adr-1251
+          if [ -n "$HEAD_REF" ] && git ls-remote --exit-code --heads \
+              https://github.com/USAREUR-AF/goatcore "$HEAD_REF" >/dev/null 2>&1; then
+            ref="$HEAD_REF"
+          fi
+          echo "goatcore ref: $ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: USAREUR-AF/goatcore
+          ref: ${{ steps.goatcore.outputs.ref }}
+          path: .goatcore
+          sparse-checkout: ops/goat-pod-api
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.11'
+          cache: false
+      - name: Shellcheck
+        run: shellcheck -x tests/pod-carriage-local.sh
+      - name: Carried device publishes under its own slot; uncovered device refused
+        run: GOATCORE_DIR="$PWD/.goatcore" bash tests/pod-carriage-local.sh

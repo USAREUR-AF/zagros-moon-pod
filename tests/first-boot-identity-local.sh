@@ -18,7 +18,8 @@ cp "$FIRST_BOOT_SCRIPT" "$ROOT/host/zenoh-router.json5.tmpl" \
     "$ROOT/host/goat-context.sh" \
     "$ROOT/host/secure-remove.sh" \
     "$ROOT/host/goat-doctor.service.example" \
-    "$ROOT/host/goat-doctor.timer.example" "$REPO/host/"
+    "$ROOT/host/goat-doctor.timer.example" \
+    "$ROOT/host/goat-pod-api.service.example" "$REPO/host/"
 : > "$WORK/bundle.cbor"
 
 cat > "$BIN/id" <<'EOF'
@@ -337,6 +338,75 @@ if find /etc/systemd/system -maxdepth 1 \
     echo "FAIL: full run wrote a system unit outside the test directory" >&2
     exit 1
 fi
+
+# With goat-pod-api installed and a portal signer certificate in the profile, first-boot writes the
+# goat-pod-api configuration, renders carried sources through it, and installs its service.
+POD_API_STUB_DIR="$WORK/pod-api-bin"
+mkdir -p "$POD_API_STUB_DIR"
+cat > "$POD_API_STUB_DIR/goat-pod-api" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${STUB_POD_API_CALLS:?}"
+if [ "${1:-}" = render ]; then
+  while [ $# -gt 0 ]; do
+    if [ "$1" = --out ]; then printf 'rendered-by-goat-pod-api\n' > "$2"; fi
+    shift
+  done
+fi
+EOF
+chmod +x "$POD_API_STUB_DIR/goat-pod-api"
+printf 'signer\n' > "$WORK/portal-signer.pem"
+write_profile 1
+printf 'POD_API_SIGNER_CERT=%s\nPOD_API_LISTEN="127.0.0.1:8447 100.127.0.10:8447"\n' \
+    "$WORK/portal-signer.pem" >> "$REPO/profiles/test/profile.env"
+: > "$WORK/systemctl-calls"
+: > "$STUB_CHOWN_CALLS"
+set +e
+PATH="$POD_API_STUB_DIR:$BIN:$PATH" STUB_GOAT_CALLS="$WORK/goat-calls" STUB_CERT_CN=slot-a \
+    STUB_POD_API_CALLS="$WORK/pod-api-calls" STUB_SYSTEMCTL_CALLS="$WORK/systemctl-calls" \
+    bash "$REPO/host/first-boot.sh" test "$WORK/bundle.cbor" > "$WORK/pod-api.out" 2>&1
+status=$?
+set -e
+[ "$status" -eq 0 ] \
+    || { cat "$WORK/pod-api.out" >&2; echo "FAIL: first-boot with goat-pod-api exited $status" >&2; exit 1; }
+POD_API_CONFIG="$WORK/state/pod-api/config.json"
+python3 -I - "$POD_API_CONFIG" "$WORK" <<'PY' || { echo "FAIL: goat-pod-api config is wrong" >&2; exit 1; }
+import json, sys
+c = json.load(open(sys.argv[1]))
+work = sys.argv[2]
+assert c["pod_slot"] == "slot-a", c["pod_slot"]
+assert c["listen"] == ["127.0.0.1:8447", "100.127.0.10:8447"], c["listen"]
+assert c["portal_signer_cert"] == work + "/portal-signer.pem"
+assert c["router"]["base_config"] == work + "/state/zenoh/config.base.json5"
+assert c["router"]["config"] == work + "/state/zenoh/config.json5"
+assert c["router"]["container"] == "goat-moon-zenoh-router"
+assert c["fabric_router_cn"] == "fabric-router", c["fabric_router_cn"]
+assert c["portal_token_file"].endswith("/contexts/default/portal.token"), c["portal_token_file"]
+PY
+grep -q "^render --config $POD_API_CONFIG --out " "$WORK/pod-api-calls" \
+    || { echo "FAIL: first-boot did not render through goat-pod-api" >&2; exit 1; }
+grep -q 'rendered-by-goat-pod-api' "$WORK/state/zenoh/config.json5" \
+    || { echo "FAIL: the goat-pod-api rendering is not the live router config" >&2; exit 1; }
+grep -q '@carriage-rules' "$WORK/state/zenoh/config.base.json5" \
+    || { echo "FAIL: the base router config was not kept for goat-pod-api" >&2; exit 1; }
+[ -f "$SYSTEMD_UNIT_DIR/goat-pod-api.service" ] \
+    || { echo "FAIL: goat-pod-api.service not written" >&2; exit 1; }
+for call in 'enable goat-pod-api.service' 'restart goat-pod-api.service'; do
+    grep -qx "$call" "$WORK/systemctl-calls" \
+        || { echo "FAIL: systemctl $call not run" >&2; exit 1; }
+done
+# A profile value that would change the file's structure is refused.
+printf '%s\n' "POD_API_PORTAL_URL='https://x\"y'" >> "$REPO/profiles/test/profile.env"
+set +e
+PATH="$POD_API_STUB_DIR:$BIN:$PATH" STUB_GOAT_CALLS="$WORK/goat-calls" STUB_CERT_CN=slot-a \
+    STUB_POD_API_CALLS="$WORK/pod-api-calls" STUB_SYSTEMCTL_CALLS="$WORK/systemctl-calls" \
+    bash "$REPO/host/first-boot.sh" test "$WORK/bundle.cbor" > "$WORK/pod-api-bad.out" 2>&1
+status=$?
+set -e
+if [ "$status" -eq 0 ] || ! grep -q 'contains a quote' "$WORK/pod-api-bad.out"; then
+    echo "FAIL: a quote in a profile value reached the goat-pod-api config" >&2
+    exit 1
+fi
+write_profile 1
 
 unlink "$WORK/state/goat-cli/contexts/default/profile.toml"
 [ -f "$WORK/state/goat-cli/contexts/default.bak/profile.toml" ] \

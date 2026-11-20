@@ -153,6 +153,7 @@ your real one comes from your bundle.
         permission: "allow",
         key_exprs: ["**"],
       },
+      // @carriage-rules
     ],
     subjects: [
       {
@@ -165,18 +166,22 @@ your real one comes from your bundle.
         cert_common_names: ["<verified-fabric-router-cn>"],
         link_protocols: ["tls", "quic"],
       },
+      // @carriage-subjects
     ],
     policies: [
       { rules: ["pod-firstparty"], subjects: ["pod-peer", "fabric-peer"] },
       { rules: ["pod-inbound-local-interest", "pod-inbound-local-delivery"], subjects: ["pod-peer"] },
       { rules: ["pod-inbound-fabric-data", "pod-inbound-fabric-interest"], subjects: ["fabric-peer"] },
       { rules: ["fabric-interest"], subjects: ["fabric-peer"] },
+      // @carriage-policies
     ],
   },
 }
 ```
 
-That is the whole file. There is no rocksdb storage block, no per-tenant rule fan-out, no
+That is the whole file when the pod carries no other source. The three `// @carriage-…` comment
+lines mark where goat-pod-api adds the entries for carried sources
+([Carried sources](#carried-sources-goat-pod-api)). There is no rocksdb storage block, no per-tenant rule fan-out, no
 adminspace — see [Complexity](#why-it-is-this-small-complexity) for why.
 
 ## Section-by-section
@@ -250,6 +255,52 @@ fabric uses to send data to the pod. This template also adds `declare_queryable`
 rules: a local query can reach a fabric queryable, and its reply can return to the local client.
 The namespace and direction limits apply to both operations. When both namespaces are the pod
 slot, as on the sandbox, `pod-firstparty` intentionally still permits normal slot publishing.
+
+## Carried sources (goat-pod-api)
+
+Status: built (goatcore `ops/goat-pod-api`, ADR 1251 phases 2 and 5, pod side). Tested on every
+pull request by `tests/pod-carriage-local.sh` against zenohd 1.9.0.
+
+A device that holds its own goat certificate can publish and read through this pod under its own
+slot when the pod's signed rule generation carries it. goat-pod-api, a host service, does this:
+
+| Step | What happens |
+|---|---|
+| Pull | Every minute it fetches `GET /api/carriage/pods/<pod-slot>/generation` from the portal with the pod's portal API key (the goat profile's `portal.token`, issued at enrollment) |
+| Verify | It checks the signature against the portal signer certificate named in the profile (`POD_API_SIGNER_CERT`) and refuses a generation lower than the one it holds |
+| Render | It inserts the entries below at the three markers of `config.base.json5` (first-boot's template rendering) and leaves every other line unchanged |
+| Apply | It writes `config.json5`, restarts the router container (zenohd 1.9 loads an ACL change only on restart), waits for health, and restores the last known good file on failure |
+
+For each carried source the rendering adds:
+
+| Entry | Grants |
+|---|---|
+| One subject per certificate CN the generation names for the source (`carriage-cn-<n>`) | identifies that device, or the ingress adapters of a keyless source |
+| `carriage-src-<slot>-in`, bound to those subjects | `put`, `delete`, `declare_queryable`, `reply`, `liveliness_token` on the source's own write expressions, entering the pod |
+| `carriage-src-<slot>-up`, bound to `fabric-peer` | the same messages on the same expressions, leaving toward the fabric |
+| `carriage-src-<slot>-query-in` / `-query-out` | queries from the fabric to what the source serves |
+| `carriage-read-*`, bound to all carried subjects and `fabric-peer` | interest and delivery on the generation's read set (`*/**` by default; never a bare `**`) |
+
+A write expression outside the source's own slot (`<slot>/…` or `volatile/<slot>/…`) makes the whole
+generation invalid; the pod keeps the one it holds. A certificate the generation does not name gets
+nothing, because the ACL denies by default. The pod's own rules (`pod-firstparty`, `pod-inbound-*`,
+`fabric-interest`) are unchanged.
+
+The pod's local authority (named in the generation) can add, extend, revoke or reactivate rules
+for this pod while it is cut off, through the local API, `goat pod`, or the Gatepost page; see
+goatcore `docs/operations/goat-pod-api.md`.
+
+Enable it with two profile settings, then re-run first-boot:
+
+| Setting | Value |
+|---|---|
+| `POD_API_SIGNER_CERT` | the portal signer certificate (PEM), obtained through the trusted onboarding channel |
+| `POD_API_PORTAL_URL` | the portal base URL; empty runs the pod on its last generation and local rules |
+| `POD_API_LISTEN` | where the local API listens (default `127.0.0.1:8447`; add the pod's mesh address) |
+
+first-boot writes `${POD_STATE_DIR}/pod-api/config.json`, renders the router config through
+`goat-pod-api render`, and installs `goat-pod-api.service`. Without goat-pod-api on the host, or
+without `POD_API_SIGNER_CERT`, the pod carries only its own slot, as before.
 
 ## Why it is this small (complexity)
 
