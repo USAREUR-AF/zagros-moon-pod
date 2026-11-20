@@ -1,0 +1,11 @@
+# The goat-pod-api release this pod installs (ADR 1251 pod carriage). host/install-goat-pod-api.sh
+# reads it; first-boot runs that when the profile sets POD_API_SIGNER_CERT.
+#
+# A release is published by goatcore's .github/workflows/goat-pod-api-release.yml on a
+# goat-pod-api/v<semver> tag. To move the pin: set the tag, and set the SHA-256 of that release's
+# SHA256SUMS asset, checked by hand once against the cosign signature (the release notes give the
+# command). Both values change in one pull request. Empty values mean no release is pinned yet:
+# the installer changes nothing, and first-boot uses a goat-pod-api already on PATH.
+GOAT_POD_API_REPO=USAREUR-AF/goatcore
+GOAT_POD_API_TAG=
+GOAT_POD_API_SHA256SUMS_SHA256=
