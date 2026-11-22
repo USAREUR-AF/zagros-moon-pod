@@ -50,7 +50,7 @@
         <a class="btn" href="#start">Getting started</a>
         <a class="btn" href="https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/docs/partner-contract.md">Partner contract</a>
       </div>
-      <div class="cmd"><pre><span class="dollar">$ </span><code id="c-setup">cd zagros-moon-pod &amp;&amp; sudo bash moon_pod_setup.sh</code></pre><button class="copy" type="button" data-copy="c-setup">Copy</button></div>
+      <div class="cmd"><pre data-box="command"><span class="ln"><span class="dollar">$ </span><code id="c-setup">cd <span class="w">zagros-moon-pod</span> &amp;&amp; sudo bash moon_pod_setup.sh</code></span></pre><button class="copy" type="button" data-copy="c-setup">Copy</button></div>
     </div>
 
     <div class="pod" role="img" aria-label="What crosses the pod router, in the cases tests/router-forwarding-local.sh asserts on every pull request: the fabric router's subscription to */** is accepted as interest only; a put to the pod's slot reaches the fabric under rule pod-firstparty; puts to outside/test/blocked and into the inbound release/goat namespace from the pod, and a put into the slot by another identity, are denied by the default; a put from the fabric to release/goat/test/pong reaches the pod's app under rule pod-inbound-fabric-data.">
@@ -68,7 +68,7 @@
         <g id="pk"></g>
         </g>
       </svg>
-<pre class="log" id="log">pod    put &lt;slot&gt;/test/ping              <span class="ok">allow</span>
+<pre class="log" id="log" data-box="output">pod    put &lt;slot&gt;/test/ping              <span class="ok">allow</span>
 pod    put outside/test/blocked           <span class="no">deny</span>
 fabric put release/goat/test/pong         <span class="ok">allow</span></pre>
       <div class="foot" id="foot">The cases <code>tests/router-forwarding-local.sh</code> asserts on every pull request, against two real Zenoh routers. Rules from <code>host/zenoh-router.json5.tmpl</code>.</div>
@@ -133,9 +133,9 @@ fabric put release/goat/test/pong         <span class="ok">allow</span></pre>
   <div class="wrap">
     <h2>Getting started</h2>
     <p class="sub">The reference host is Ubuntu 24.04 LTS. The setup script is one re-runnable menu: bring-up, stand-up and verify. Nothing runs until you confirm, and the setup key is never put on a command line.</p>
-    <pre class="block">git clone https://github.com/USAREUR-AF/zagros-moon-pod
-cd zagros-moon-pod
-sudo bash moon_pod_setup.sh     # choose "Configure inputs", then Part 1, 2 or 3</pre>
+    <pre class="block" data-box="command"><span class="ln">git clone <span class="w">https://github.com/USAREUR-AF/zagros-moon-pod</span>
+</span><span class="ln">cd <span class="w">zagros-moon-pod</span>
+</span><span class="ln">sudo bash moon_pod_setup.sh     # choose "Configure inputs", then Part 1, 2 or 3</span></pre>
     <p><a href="https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/docs/partner-run-guide.md">Partner run guide</a> &middot; <a href="https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/docs/pod-host-bringup.md">Host bring-up</a> &middot; <a href="https://github.com/USAREUR-AF/zagros-moon-pod/tree/main/clients">Client SDKs</a> &middot; <a href="https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/docs/architecture.md">Architecture</a></p>
   </div>
 </section>
