@@ -12,6 +12,7 @@ One static page: no framework, no external requests, no web fonts.
 | `assets/hero.js` | the copy buttons, and the hero: animates `assets/from-tree/hero.json` |
 | `assets/icon.svg` | the page icon |
 | `assets/from-tree/` | git-ignored; written by `build.py`: `hero.json` and the README figure from `docs/figures/` |
+| `fitcheck.py` | run by `build.py`: fails when a command box is cut off at 1440 or 390 px |
 | `build.py` | gathers `assets/from-tree/` and checks the page against the tree |
 
 ## Preview
@@ -53,3 +54,7 @@ it and fails if the page says something else.
 | `rules` | allow rules over a default deny | entries of `access_control.rules` in `host/zenoh-router.json5.tmpl` |
 | `sdks` | client SDK languages | directories in `clients/connect/` |
 | `requirements` | requirements at the boundary | numbered items under "The seven requirements" in `docs/partner-contract.md` |
+
+## Command and output boxes
+
+Every `<pre>` on the page is marked `data-box="command"` or `data-box="output"`. A command box shows the whole command at any width: it wraps at spaces, each line of it a `<span class="ln">` with a hanging indent, and Copy copies the exact text. An output box may scroll inside its box on a narrow screen, and its caption says so. `build.py` ends by running `fitcheck.py`, which loads the page in headless Chrome at 1440 and 390 px wide and fails when a box is cut off.

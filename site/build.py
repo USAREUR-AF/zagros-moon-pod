@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -106,7 +107,8 @@ def main():
     if bad:
         return 1
     print("site: hero cases found in the test and the template; numbers:", ", ".join(f"{k}={v}" for k, v in measured.items()))
-    return 0
+    # no command box cut off at 1440 or 390 px, no output box at 1440 (headless Chrome)
+    return subprocess.run([sys.executable, "-I", os.path.join(SITE, "fitcheck.py"), SITE, "index.html"]).returncode
 
 
 if __name__ == "__main__":
