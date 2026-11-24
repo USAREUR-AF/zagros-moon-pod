@@ -269,7 +269,7 @@ slot when the pod's signed rule generation carries it. goat-pod-api, a host serv
 | Pull | Every minute it fetches `GET /api/carriage/pods/<pod-slot>/generation` from the portal with the pod's portal API key (the goat profile's `portal.token`, issued at enrollment) |
 | Verify | It checks the signature against the portal signer certificate named in the profile (`POD_API_SIGNER_CERT`) and refuses a generation lower than the one it holds |
 | Render | It inserts the entries below at the three markers of `config.base.json5` (first-boot's template rendering) and leaves every other line unchanged |
-| Apply | It writes `config.json5`, restarts the router container (zenohd 1.9 loads an ACL change only on restart), waits for health, and restores the last known good file on failure |
+| Apply | It writes `config.json5`, restarts the router container (zenohd 1.9 loads an ACL change only on restart), waits for health. When it fails, a change that only adds a source rolls back to the last known good file. A change that takes a grant away never does: the router runs `config.base.json5`, which carries no source, or is stopped, and the change is tried again (tested with a stub router, not run on a pod; goat-pod-api built before goatcore `a97a12f1` restores the last known good file in both cases) |
 
 For each carried source the rendering adds:
 
@@ -308,6 +308,47 @@ changes. The host needs `cosign`. No release is pinned yet; until one is, first-
 pinned). It then writes `${POD_STATE_DIR}/pod-api/config.json`, renders the router config through
 `goat-pod-api render`, and installs `goat-pod-api.service`. Without goat-pod-api on the host, or
 without `POD_API_SIGNER_CERT`, the pod carries only its own slot, as before.
+
+### Turn carriage off, and on again
+
+Run on a pod on 2026-11-24, off and on, with a carried device. Off took 8 s and on took 19 s; each restarts the router once,
+which drops local sessions. While off, the pod's own slot kept reaching the core, the device was refused at the pod, and
+nothing of goat-pod-api ran.
+
+**Off.** As root, with your own profile and state directory:
+
+```sh
+set -euo pipefail
+PROFILE=/opt/moon-pod/profiles/<profile>/profile.env
+cd /var/lib/goat-moon/zenoh
+sed -i 's/^POD_API_SIGNER_CERT=/#&/' "$PROFILE"
+systemctl disable --now goat-pod-api
+! grep -q carriage- config.base.json5
+install -m 600 config.base.json5 config.last-known-good.json5
+install -m 600 config.base.json5 config.json5
+docker restart -t 1 goat-moon-zenoh-router
+for i in $(seq 60); do [ "$(docker inspect -f '{{.State.Health.Status}}' goat-moon-zenoh-router)" = healthy ] && break; sleep 2; done
+docker inspect -f '{{.State.Health.Status}}' goat-moon-zenoh-router | grep -qx healthy
+sha256sum config.json5 | cut -d' ' -f1 > .config.applied.sha256
+```
+
+The profile line is commented out so that the next first-boot does not turn carriage on. The last known good file is replaced
+because first-boot restores it when a new config fails, and it may admit a carried device.
+
+Off looks like: `systemctl is-active goat-pod-api` says `inactive`; nothing listens on port 8447; `config.json5`,
+`config.base.json5` and `config.last-known-good.json5` are identical; a publish under the pod's own slot reaches the fabric.
+
+| Kept, unchanged | Does not happen while off |
+|---|---|
+| In `<state>/pod-api/`: `ledger.jsonl` and `ledger.jsonl.ack`, `generation.json` (the held generation), `central-archive.json`, `config.json`. The binary, the Gatepost page, and the unit file (disabled) | Pulls, ledger uploads (unsent lines wait), the local API and Gatepost. The portal and the core are not touched |
+
+**On.** Remove the `#` before `POD_API_SIGNER_CERT` and re-run first-boot with the same profile and bundle. It renders from the
+held generation, then starts `goat-pod-api`, which pulls at once. Until that first pull succeeds, a device whose rule was
+revoked centrally while carriage was off is admitted again, at most until its rule's end date. When rules may have been
+revoked meanwhile, turn carriage on only with the portal reachable. (This window is read from the code, not run.)
+
+On looks like: the service is active, `/v1/status` says `connected` with the current generation, and the file that
+`goat-pod-api render --config <state>/pod-api/config.json --out <file>` writes is identical to `config.json5`.
 
 ## Why it is this small (complexity)
 
