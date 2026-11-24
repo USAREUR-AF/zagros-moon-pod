@@ -321,9 +321,9 @@ nothing of goat-pod-api ran.
 set -euo pipefail
 PROFILE=/opt/moon-pod/profiles/<profile>/profile.env
 cd /var/lib/goat-moon/zenoh
+if grep -q carriage- config.base.json5; then echo "config.base.json5 carries a device; stop" >&2; exit 1; fi
 sed -i 's/^POD_API_SIGNER_CERT=/#&/' "$PROFILE"
 systemctl disable --now goat-pod-api
-! grep -q carriage- config.base.json5
 install -m 600 config.base.json5 config.last-known-good.json5
 install -m 600 config.base.json5 config.json5
 docker restart -t 1 goat-moon-zenoh-router
