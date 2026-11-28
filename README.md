@@ -123,6 +123,7 @@ zagros-moon-pod/
 │   ├── partner-contract.md         the seven requirements + Tier-2 ingress (self-contained)
 │   ├── architecture.md             bundle shape + data flow
 │   ├── router-config.md            the Zenoh router config: example, structure, create/manage/use
+│   ├── devices-behind-a-pod.md     how devices behind the pod are identified; the interim key convention
 │   ├── pod-host-bringup.md         blank hardware -> pod-ready host (Pi 5 worked example)
 │   ├── partner-run-guide.md        run the pod you were handed; enroll; declare; smoke-test
 │   ├── goat-client-v02-contract.md mesh-daemon contract (production mesh path)
@@ -190,6 +191,8 @@ The reference host OS is **Ubuntu 24.04 LTS**; see the host guide's
   `quic/:7448` instead of `tls/:7447` (one line different); QUIC helps a lossy/mobile edge.
 - **How Quality of Service protects what matters:** [`docs/quality-of-service.md`](docs/quality-of-service.md) —
   the lanes, the honest health gauge, and what you do as a producer to fit the model.
+- **Devices behind this pod:** [`docs/devices-behind-a-pod.md`](docs/devices-behind-a-pod.md) — they publish as the
+  pod today; do not hand-edit the pod's ACL; the interim `<pod-slot>/routed/<source-slot>/` key convention.
 - **Understanding the router config:** [`docs/router-config.md`](docs/router-config.md) — a worked
   example of the rendered `config.json5`, what each section does, and how it's created/managed/used.
 - **Understanding the boundary contract:** [`docs/partner-contract.md`](docs/partner-contract.md).
